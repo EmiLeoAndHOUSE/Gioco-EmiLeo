@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stickman Survival - Rebirth</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        /* Canvas e Overlay */
+        #gameCanvas {
+            image-rendering: -moz-crisp-edges;
+            image-rendering: -webkit-optimize-contrast;
+            image-rendering: crisp-edges;
+            image-rendering: pixelated;
+        }
+
+        /* --- STILI MAIN MENU (ARCADE) --- */
+        #mainMenu {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: #000 url('arcade_bg.png') no-repeat center center;
+            background-size: cover;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            transition: opacity 0.8s ease-out;
+            overflow: hidden;
+        }
+
+        #mainMenu::after {
+            content: "";
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+            background-size: 100% 4px, 3px 100%;
+            pointer-events: none;
+            z-index: 101;
+        }
+        
+        #gameTitle {
+            font-family: 'Consolas', monospace;
+            font-size: 90px;
+            color: #fff;
+            text-shadow: 
+                0 0 10px #00ffcc,
+                0 0 20px #00ffcc,
+                4px 4px 0px #000;
+            margin-bottom: 40px;
+            text-align: center;
+            letter-spacing: 10px;
+            animation: pulseText 1.5s infinite alternate;
+            z-index: 102;
+        }
+
+        @keyframes pulseText {
+            0% { transform: scale(1); filter: brightness(1); }
+            100% { transform: scale(1.05); filter: brightness(1.3); }
+        }
+
+        #startBtn {
+            font-family: 'Consolas', monospace;
+            background: #ff0055;
+            border: 6px solid #fff;
+            color: white;
+            font-weight: bold;
+            font-size: 42px;
+            padding: 20px 60px;
+            cursor: pointer;
+            box-shadow: 0px 10px 0px #990033, 0 0 30px rgba(255, 0, 85, 0.6);
+            transition: all 0.1s;
+            z-index: 102;
+            text-transform: uppercase;
+            letter-spacing: 5px;
+            animation: glow 1s infinite alternate;
+        }
+
+        @keyframes glow {
+            from { box-shadow: 0px 10px 0px #990033, 0 0 20px rgba(255, 0, 85, 0.4); }
+            to { box-shadow: 0px 10px 0px #990033, 0 0 50px rgba(255, 0, 85, 0.9); }
+        }
+
+        #startBtn:hover {
+            background: #ff3377;
+            transform: translateY(-4px);
+            box-shadow: 0px 14px 0px #990033, 0 0 60px rgba(255, 0, 85, 1);
+        }
+
+        #startBtn:active {
+            transform: translateY(10px);
+            box-shadow: 0px 2px 0px #990033;
+        }
+
+        #brandWatermark {
+            position: absolute;
+            bottom: 30px;
+            right: 40px;
+            font-family: 'Consolas', monospace;
+            font-size: 24px;
+            color: rgba(255, 255, 255, 0.7);
+            text-shadow: 2px 2px 4px #000;
+            z-index: 103;
+            letter-spacing: 2px;
+            border-bottom: 2px solid #ff0055;
+            padding-bottom: 5px;
+        }
+
+        /* --- STILI SHOP CASTELLO --- */
+        #shopMenu {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 280px;
+            background: rgba(20, 25, 30, 0.95);
+            border: 3px solid #fbc02d; /* Bordo Oro */
+            border-radius: 8px;
+            padding: 15px;
+            display: none; /* Nascosto di default */
+            flex-direction: column;
+            gap: 12px;
+            z-index: 200;
+            box-shadow: 0 0 20px rgba(251, 192, 45, 0.3);
+            font-family: 'Consolas', monospace;
+            color: white;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from { transform: translateX(300px); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+
+        .shop-header {
+            font-size: 22px;
+            color: #fbc02d;
+            text-align: center;
+            border-bottom: 2px solid #555;
+            padding-bottom: 8px;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .shop-item {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid #444;
+            padding: 10px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .shop-item:hover {
+            background: rgba(251, 192, 45, 0.15);
+            border-color: #fbc02d;
+            transform: scale(1.04) translateX(5px);
+            box-shadow: -5px 0 15px rgba(251, 192, 45, 0.2);
+        }
+
+        .item-icon {
+            width: 44px;
+            height: 44px;
+            object-fit: contain;
+            background: #000; /* Fondo Nero come richiesto */
+            border-radius: 4px;
+            padding: 2px;
+            filter: drop-shadow(0 0 5px rgba(251, 192, 45, 0.3));
+            image-rendering: pixelated;
+        }
+
+        .shop-item:hover .item-icon {
+            filter: drop-shadow(0 0 8px rgba(251, 192, 45, 0.6));
+            transform: rotate(-10deg) scale(1.1);
+            transition: transform 0.2s;
+        }
+
+        .item-info {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+        }
+
+        .item-name {
+            font-size: 15px;
+            font-weight: bold;
+            color: #fff;
+        }
+
+        .item-desc {
+            font-size: 10px;
+            color: #aaa;
+            margin-top: 2px;
+        }
+
+        .item-price {
+            background: #fbc02d;
+            color: #000;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 13px;
+            box-shadow: 0 2px 0 #b79100;
+        }
+
+        .close-shop {
+            font-size: 12px;
+            text-align: center;
+            color: #666;
+            margin-top: 5px;
+            font-style: italic;
+        }
+
+        /* --- STILI INVENTARIO FRAMMENTI --- */
+        #inventoryUI {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            display: flex;
+            gap: 15px;
+            z-index: 150;
+            background: rgba(0,0,0,0.4);
+            padding: 10px;
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.1);
+            backdrop-filter: blur(5px);
+        }
+
+        .inventory-slot {
+            width: 50px;
+            height: 50px;
+            background: rgba(255,255,255,0.05);
+            border: 2px solid #444;
+            border-radius: 8px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+            transition: all 0.3s;
+        }
+
+        .inventory-slot.active {
+            border-color: #00ffcc;
+            box-shadow: 0 0 15px rgba(0,255,204,0.4);
+            background: rgba(0,255,204,0.1);
+        }
+
+        .shard-icon {
+            width: 32px;
+            height: 32px;
+            filter: drop-shadow(0 0 5px rgba(0,255,204,0.8));
+            animation: floatShard 2s infinite ease-in-out;
+            opacity: 0;
+            transition: opacity 0.5s;
+        }
+
+        .inventory-slot.active .shard-icon {
+            opacity: 1;
+        }
+
+        @keyframes floatShard {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-5px); }
+        }
+
+        /* --- STILI VITTORIA FINALE --- */
+        #victoryScreen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: radial-gradient(circle, rgba(0,255,204,0.95) 0%, rgba(10,15,20,1) 100%);
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 500;
+            color: white;
+            text-align: center;
+            font-family: 'Consolas', monospace;
+            animation: fadeInVictory 1.5s ease-out;
+        }
+
+        @keyframes fadeInVictory {
+            from { opacity: 0; transform: scale(1.5); }
+            to { opacity: 1; transform: scale(1); }
+        }
+
+        #victoryTitle {
+            font-size: 80px;
+            color: #fff;
+            text-shadow: 0 0 30px #00ffcc, 0 0 60px #00ffcc;
+            margin-bottom: 20px;
+        }
+
+        .magic-btn {
+            background: #00ffcc;
+            border: none;
+            padding: 20px 50px;
+            color: #111;
+            font-weight: bold;
+            font-size: 24px;
+            border-radius: 50px;
+            cursor: pointer;
+            box-shadow: 0 0 20px #00ffcc;
+            transition: all 0.3s;
+            margin-top: 50px;
+        }
+
+        .magic-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 0 40px #00ffcc;
+        }
+
+        /* --- SCHERMATA SELEZIONE PERSONAGGIO --- */
+        #charSelect {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100vw; height: 100vh;
+            background: rgba(0, 0, 0, 0.95);
+            display: none; 
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 200;
+            transition: opacity 0.5s ease-in;
+            opacity: 0;
+            overflow: hidden;
+        }
+
+        #charTitle {
+            font-family: 'Consolas', monospace;
+            font-size: 60px;
+            color: #00ffff;
+            text-shadow: 0 0 20px #00ffff;
+            margin-bottom: 50px;
+            letter-spacing: 5px;
+            text-align: center;
+            animation: pulseText 1.5s infinite alternate;
+        }
+
+        .char-container {
+            display: flex;
+            gap: 30px;
+            max-width: 1200px;
+            padding: 20px;
+        }
+
+        .char-card {
+            background: #111;
+            border: 4px solid #333;
+            width: 280px;
+            padding: 25px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            position: relative;
+        }
+
+        .char-card:hover {
+            transform: scale(1.05) translateY(-10px);
+            border-color: #fff;
+            box-shadow: 0 0 40px rgba(255, 255, 255, 0.2);
+        }
+
+        .char-stats {
+            margin-top: 15px;
+            text-align: left;
+            font-size: 13px;
+            line-height: 1.6;
+            font-family: 'Consolas', monospace;
+        }
+
+        .pro { color: #00ff88; }
+        .con { color: #ff4444; }
+        .spec { 
+            color: #ff00ff; 
+            font-weight: bold; 
+            margin-top: 10px;
+            border-top: 1px solid #333;
+            padding-top: 5px;
+        }
+
+        .char-card.cyber:hover { border-color: #00ffff; box-shadow: 0 0 40px rgba(0, 255, 255, 0.5); }
+        .char-card.ronin:hover { border-color: #ff0000; box-shadow: 0 0 40px rgba(255, 0, 0, 0.5); }
+        .char-card.paladin:hover { border-color: #ffd700; box-shadow: 0 0 40px rgba(255, 215, 0, 0.5); }
+
+        .char-card h2 {
+            font-family: 'Consolas', monospace;
+            font-size: 24px;
+            margin-bottom: 15px;
+            color: #fff;
+        }
+
+        .char-card p {
+            font-family: 'Arial', sans-serif;
+            font-size: 14px;
+            color: #aaa;
+            line-height: 1.4;
+        }
+
+        .char-preview {
+            width: 100%;
+            height: 120px;
+            margin-bottom: 20px;
+            background: rgba(255, 255, 255, 0.05);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 60px;
+            border-radius: 4px;
+        }
+
+        /* --- STILI MINI LEADERBOARD (ARCADE HALL OF FAME) --- */
+        #miniLeaderboard {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 150px; /* Ancora più stretto */
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(0, 255, 204, 0.4);
+            border-radius: 4px;
+            padding: 4px 8px; /* Padding ridottissimo */
+            box-shadow: 0 0 10px rgba(0, 255, 204, 0.15);
+            font-family: 'Consolas', monospace;
+            z-index: 120;
+            pointer-events: none;
+            backdrop-filter: blur(10px);
+            animation: miniFadeIn 1s ease-out;
+        }
+
+        @keyframes miniFadeIn {
+            from { opacity: 0; transform: translateX(20px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+
+        .mini-lb-header {
+            font-size: 9px; /* Testo microscopico professionale */
+            color: #00ffcc;
+            text-align: center;
+            border-bottom: 1px solid rgba(0, 255, 204, 0.1);
+            margin-bottom: 4px;
+            padding-bottom: 2px;
+            letter-spacing: 1px;
+            opacity: 0.8;
+        }
+
+        .mini-lb-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 9px;
+            margin-bottom: 2px;
+            color: #fff;
+        }
+
+        .mini-name { color: #fbc02d; font-weight: bold; }
+        .mini-days { color: #888; font-size: 8px; margin-left: 4px; flex: 1; }
+        .mini-score { color: #00ffcc; font-weight: bold; }
+    </style>
+</head>
+<body>
+    
+    <!-- MAIN MENU SCREEN -->
+    <div id="mainMenu">
+        <h1 id="gameTitle">STICKMAN<br>SURVIVAL</h1>
+        <button id="startBtn">START SURVIVAL</button>
+        <div id="brandWatermark">EmiAndLeoHouse</div>
+    </div>
+
+    <!-- CHARACTER SELECTION SCREEN -->
+    <div id="charSelect" style="display: none;">
+        <h1 id="charTitle">SCEGLI IL TUO EROE</h1>
+        <div class="char-container">
+            <div class="char-card cyber" onclick="selectHero('CYBER')">
+                <div class="char-preview">⚡</div>
+                <h2>CYBER SAMURAI</h2>
+                <p>Il giustiziere neon. Veloce e tecnologico.</p>
+                <div class="char-stats">
+                    <div class="pro">↑ Velocità Estrema (620)</div>
+                    <div class="pro">↑ Attacco Shuriken (Distanza)</div>
+                    <div class="con">↓ Salute Fragile (60 HP)</div>
+                    <div class="spec">SPECIALE: "BLITZ" - Attacco fulmineo (0.2s) e gittata infinita.</div>
+                </div>
+            </div>
+            <div class="char-card ronin" onclick="selectHero('RONIN')">
+                <div class="char-preview">👺</div>
+                <h2>CRIMSON RONIN</h2>
+                <p>Il viandante del fuoco. Il maestro del ritmo.</p>
+                <div class="char-stats">
+                    <div class="pro">↑ Agilità Dinamica (Flow)</div>
+                    <div class="pro">↑ Grande Mobilità</div>
+                    <div class="con">↓ Solo Corpo a Corpo</div>
+                    <div class="spec">SPECIALE: "WARRIOR'S BREEZE" - L'aura rossa potenzia la velocità (+60%) dopo ogni colpo.</div>
+                </div>
+            </div>
+            <div class="char-card paladin" onclick="selectHero('PALADIN')">
+                <div class="char-preview">🛡️</div>
+                <h2>GOLD PALADIN</h2>
+                <p>Il baluardo d'oro. La difesa suprema.</p>
+                <div class="char-stats">
+                    <div class="pro">↑ Titano Corazzato (120 HP)</div>
+                    <div class="pro">↑ Massiccio (Stazza +40%)</div>
+                    <div class="con">↓ Estremamente Lento (260)</div>
+                    <div class="spec">SPECIALE: "DIVINE BULWARK" - Scudo riflettente indistruttibile. Parata perfetta (0 Danni).</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SHOP MENU -->
+    <div id="shopMenu">
+        <div class="shop-header">Mercato Reale</div>
+        
+        <div class="shop-item" onclick="buyItem('heal')">
+            <img src="heal.png" class="item-icon" alt="Heal">
+            <div class="item-info">
+                <span class="item-name">Pozione Curativa</span>
+                <span class="item-desc">Salute 100%</span>
+            </div>
+            <span class="item-price">40 Pts</span>
+        </div>
+
+        <div class="shop-item" onclick="buyItem('shield')">
+            <img src="shield.png" class="item-icon" alt="Shield">
+            <div class="item-info">
+                <span class="item-name">Scudo d'Acciaio</span>
+                <span class="item-desc">5 Nuove parate</span>
+            </div>
+            <span class="item-price">60 Pts</span>
+        </div>
+
+        <div class="shop-item" onclick="buyItem('scroll')">
+            <img src="scroll.png" class="item-icon" alt="Scroll">
+            <div class="item-info">
+                <span class="item-name">Pergamena del Supporto</span>
+                <span class="item-desc">Evoca 1 Alleato ogni 5 giorni</span>
+            </div>
+            <span class="item-price">100 Pts</span>
+        </div>
+
+        <div class="shop-item" onclick="buyItem('boots')">
+            <img src="boots.png" class="item-icon" alt="Boots">
+            <div class="item-info">
+                <span class="item-name">Stivali Veloce</span>
+                <span class="item-desc">+20% Velocità</span>
+            </div>
+            <span class="item-price">120 Pts</span>
+        </div>
+
+        <div class="shop-item" onclick="buyItem('armor')">
+            <img src="armor.png" class="item-icon" alt="Armor">
+            <div class="item-info">
+                <span class="item-name">Armatura Incantata</span>
+                <span class="item-desc">-50% Danni Subiti</span>
+            </div>
+            <span class="item-price">150 Pts</span>
+        </div>
+
+        <div class="shop-item" onclick="buyItem('ally')">
+            <img src="ally_potion.png" class="item-icon" alt="Ally">
+            <div class="item-info">
+                <span class="item-name">Pozione Segreta</span>
+                <span class="item-desc">Cura 1 Zombie Alleato</span>
+            </div>
+            <span class="item-price">200 Pts</span>
+        </div>
+
+        <div class="close-shop">Premi 'ESC' per uscire</div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+    
+    <div id="ui">
+        <div class="stats">
+            <span id="healthUI">Salute: 100</span> | 
+            <span id="scoreUI">Punti: 0</span>
+        </div>
+        <div id="timeUI">Giorno: 08:00 AM</div>
+    </div>
+
+    <div id="miniLeaderboard">
+        <div class="mini-lb-header">TOP SURVIVORS</div>
+        <div id="miniLeaderboardList"></div>
+    </div>
+
+    <!-- INVENTARIO FRAMMENTI -->
+    <div id="inventoryUI">
+        <div class="inventory-slot" id="slot-0"><div class="shard-icon">💎</div></div>
+        <div class="inventory-slot" id="slot-1"><div class="shard-icon">💎</div></div>
+        <div class="inventory-slot" id="slot-2"><div class="shard-icon">💎</div></div>
+        <div class="inventory-slot" id="slot-3"><div class="shard-icon">💎</div></div>
+    </div>
+
+    <!-- VITTORIA FINALE -->
+    <div id="victoryScreen">
+        <h1 id="victoryTitle">TERRA SALVATA!</h1>
+        <p style="font-size: 24px;">La magia della cura ha liberato l'umanità.</p>
+        <p id="victoryScore" style="font-size: 32px; color: #fbc02d; margin-top: 20px;"></p>
+        <button class="magic-btn" onclick="location.reload()">RICOMINCIA</button>
+    </div>
+
+    <div id="gameOver" style="display: none;">
+        <h1 id="gameOverTitle">SEI MORTO!</h1>
+        <div id="finalStats">
+            <p id="finalScore">Punteggio: 0</p>
+            <p id="finalDays">Sopravvivenza: 1 Giorno</p>
+        </div>
+        
+        <div id="nameEntry">
+            <p>Inserisci il tuo nome (3 LETTERE):</p>
+            <input type="text" id="playerNameInput" maxlength="3" autofocus>
+            <button id="saveScoreBtn">SALVA NELLA CLASSIFICA</button>
+        </div>
+
+        <div id="leaderboardContainer" style="display: none;">
+            <h2>TOP SLAYERS</h2>
+            <div id="leaderboardList"></div>
+            <button id="restartBtn">RIGIOCA</button>
+        </div>
+
+        <p id="f5Hint">Premi F5 per un nuovo mondo!</p>
+    </div>
+
+
+    <!-- Script Unificato: Il cuore di Stickman Survival -->
+    <script src="game.js"></script>
+</body>
+</html>
