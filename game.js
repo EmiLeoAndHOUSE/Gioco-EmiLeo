@@ -3282,6 +3282,69 @@ class Zombie {
                         }
                     }
                 }
+
+                // --- SISTEMA DI COMBATTIMENTO ZOMBIE (Attacco vs Player & Alleati) ---
+                if (!player.isHitTimer) player.isHitTimer = 0;
+                
+                // 1. Attacco vs Player (Inseguimento attivo)
+                if (player.isHitTimer <= 0 && this.hp > 0 && this.isHit <= 0 && this.state === 'chasing') {
+                    let pDx = Math.abs(player.x - (this.x + this.width/2));
+                    let pDy = Math.abs(player.y - this.y);
+                    if (pDx < 45 && pDy < 60) {
+                        let facingEnemy = (this.x > player.x && player.direction === 1) || (this.x < player.x && player.direction === -1);
+                        if (player.isParrying && facingEnemy) {
+                            // PARATA SPECIALE ARCADE
+                            if (playerStyle === 'PALADIN') {
+                                playSound('hit', this.x, this.y);
+                                this.hp -= 1.0; 
+                                this.vx = -this.vx * 3.5;
+                                this.vy = -200;
+                                this.isHit = 0.5;
+                                player.isHitTimer = 0.3;
+                                createSparks(player.x + (40 * player.direction), player.y + 20, '#FFD700');
+                            } else {
+                                playSound('hit', this.x, this.y);
+                                player.shieldDurability--;
+                                this.vx = -this.vx * 1.5;
+                                player.isHitTimer = 0.5;
+                                createDust(player.x + 20 * player.direction, player.y + 20, 3);
+                                if (player.shieldDurability <= 0) {
+                                    player.hasShield = false;
+                                    playSound('break', player.x, player.y);
+                                    createPixelDissolve(player.x, player.y, 40, 80, ['#2c3e50', '#95a5a6', '#7f8c8d']);
+                                }
+                            }
+                        } else {
+                            // DANNO PIENO (Giocatore colpito)
+                            playSound('player_hit');
+                            let dmg = 15;
+                            if (player.hasArmor) dmg *= 0.5;
+                            player.health -= dmg;
+                            player.vy = -350;
+                            player.isHitTimer = 1.0;
+                            
+                            // Update HUD (Emergenza)
+                            let hUI = document.getElementById('healthUI');
+                            if (hUI) hUI.innerText = `Salute: ${Math.floor(player.health)}${player.hasShield ? " | ESCUDO DIVINO: ATTIVO 🛡️✨" : ""}`;
+                        }
+                    }
+                }
+
+                // 2. Attacco vs Alleati (Inseguimento attivo)
+                allies.forEach(a => {
+                    if (a.hp > 0 && a.isHitTimer <= 0 && this.hp > 0 && this.isHit <= 0 && this.state === 'chasing') {
+                        let dAx = Math.abs(a.x - this.x);
+                        let dAy = Math.abs(a.y - this.y);
+                        if (dAx < 40 && dAy < 50) {
+                            playSound('player_hit', a.x, a.y);
+                            a.hp -= 10;
+                            a.isHitTimer = 0.8;
+                            a.vy = -200;
+                            a.vx = (a.x > this.x ? 100 : -100);
+                            createDust(a.x + a.width / 2, a.y + a.height, 5);
+                        }
+                    }
+                });
                 break;
 
             case 'digging':
@@ -4252,8 +4315,8 @@ function update(dt) {
     let timeUI = document.getElementById('timeUI');
     if (timeUI) timeUI.innerText = `Giorno ${currentDay} - Timer: ${timerMin}:${timerSec} / ${maxTimeStr}`;
 
-    // 3. ESECUZIONE CORPO FISICO
-    player.update(dt, world);
+    // 3. ESECUZIONE CORPO FISICO (Fix Freeze)
+    player.update(dt, world, enemies);
 
     // 3.1 AGGIORNAMENTO ALLEATI
     for (let i = allies.length - 1; i >= 0; i--) {
@@ -4350,90 +4413,25 @@ function update(dt) {
             continue;
         }
 
-        // Combattimento: Giocatore vs Zombie
-        if (player.isAttacking && z.state !== 'digging') {
-            let pProg = 1 - (player.attackTimer / player.attackDuration);
-            if (pProg > 0.1 && pProg < 0.7) {
-                let dx = Math.abs(player.x - z.x);
-                let dy = Math.abs(player.y - z.y);
-                if (dx < 75 && dy < 75) {
-                    let facciale = (z.x >= player.x && player.direction === 1) || (z.x <= player.x && player.direction === -1);
-                    if (facciale && z.isHit <= 0) {
-                        if (z.isBoss) {
-                            // CONTROLLO HITBOX TESTA (Parte superiore del colosso)
-                            if (player.y + 30 > z.y + 90) {
-                                // COLPO ALLA CORAZZA: Scintille e Rimbalzo!
-                                playSound('hit', z.x, z.y); 
-                                createSparks(z.x + z.width/2, player.y + 30);
-                                z.isHit = 0.1;
-                                continue; 
-                            } else {
-                                // COLPO ALLA TESTA: Segnale Visivo Speciale!
-                                createPixelDissolve(z.x, z.y, z.width, 60, ['#00FFFF', '#FFFFFF', '#0099FF']);
-                                screenShake = 20;
-                            }
-                        }
-                        
-                        playSound('zombie_hit', z.x, z.y);
-                        z.hp--;
-                        z.isHit = 0.3;
-                        z.vx = player.direction * (z.isBoss ? 0 : 350); 
-                        z.vy = (z.isBoss ? 0 : -180);
-                    }
+        // --- LOGICA DI COMBATTIMENTO E COLLISIONE (Centralizzata nelle Classi) ---
+        // La collisione Player vs Zombie e Zombie vs Player è ora gestita in player.update() e z.update()
+        // per massimizzare le performance ed eliminare il lag del ciclo principale.
+        
+        // Combattimento: Zombie vs Alleati
+        allies.forEach(a => {
+            if (z.state === 'chasing' && a.hp > 0 && a.isHitTimer <= 0 && z.hp > 0 && z.isHit <= 0) {
+                let dAx = Math.abs(a.x - z.x);
+                let dAy = Math.abs(a.y - z.y);
+                if (dAx < 40 && dAy < 50) {
+                    playSound('player_hit', a.x, a.y);
+                    a.hp -= 10;
+                    a.isHitTimer = 0.8;
+                    a.vy = -200;
+                    a.vx = (a.x > z.x ? 100 : -100);
+                    createDust(a.x + a.width / 2, a.y + a.height, 5);
                 }
             }
-        }
-
-        // Combattimento: Zombie vs Giocatore
-        if (!player.isHitTimer) player.isHitTimer = 0;
-        if (z.state === 'chasing' && player.isHitTimer <= 0 && z.hp > 0 && z.isHit <= 0) {
-            let pDx = Math.abs(player.x - z.x);
-            let pDy = Math.abs(player.y - z.y);
-            if (pDx < 35 && pDy < 45) {
-                let facingEnemy = (z.x > player.x && player.direction === 1) || (z.x < player.x && player.direction === -1);
-                if (player.isParrying && facingEnemy) {
-                    // --- LOGICA SPECIALE: PALADINO (RIFLESSO) ---
-                    if (playerStyle === 'PALADIN') {
-                        playSound('hit', z.x, z.y);
-                        z.hp -= 1.0; // Danno riflesso: Lo zombie si fa male!
-                        z.vx = -z.vx * 3.5; // Knockback divino potenziato
-                        z.vy = -200;
-                        z.isHit = 0.5;
-                        player.isHitTimer = 0.3; // Breve cooldown parata
-                        
-                        // --- FLASH DIVINO (Effetto particellare dorato) ---
-                        let flashX = player.x + (40 * player.direction);
-                        createSparks(flashX, player.y + 20, '#FFD700');
-                    } else {
-                        // Logica standard (Ronin/Cyber)
-                        playSound('hit', z.x, z.y);
-                        player.shieldDurability--;
-                        z.vx = -z.vx * 1.5;
-                        player.isHitTimer = 0.5;
-                        createDust(player.x + 20 * player.direction, player.y + 20, 3);
-                        
-                        if (player.shieldDurability <= 0) {
-                            player.hasShield = false;
-                            playSound('break', player.x, player.y);
-                            createPixelDissolve(player.x, player.y, 40, 80, ['#2c3e50', '#95a5a6', '#7f8c8d']);
-                        }
-                    }
-                } else {
-                    playSound('player_hit');
-                    let dmg = 15;
-                    if (player.hasArmor) dmg *= 0.5;
-                    
-                    // Solo Ronin e Cyber prendono danno pieno. Il Paladin ne prende lo 0% se colpito di fronte parando (già gestito sopra)
-                    player.health -= dmg;
-                    player.vy = -350;
-                    player.isHitTimer = 1.0;
-                    
-                    let shieldStatus = player.hasShield ? " | ESCUDO DIVINO: ATTIVO 🛡️✨" : "";
-                    let healthUI = document.getElementById('healthUI');
-                    if (healthUI) healthUI.innerText = `Salute: ${player.health}${shieldStatus}`;
-                }
-            }
-        }
+        });
 
         // Combattimento: Zombie vs Alleati
         allies.forEach(a => {
