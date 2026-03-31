@@ -2001,17 +2001,55 @@ class Player {
             drawBodyParts(true, '#800000'); // Aura rossa cupa
             ctx.restore();
         } else if (this.buffType === 'HALO') {
-            // Aureola del Titano (Disco Rotante Dorato)
+            // --- AUREOLA DEL TITANO (RE-DESIGN PREMIUM) ---
             ctx.save();
-            let rot = (Date.now() / 300) % (Math.PI * 2);
-            ctx.translate(0, -60 * sizeMult);
-            ctx.rotate(rot);
+            ctx.translate(0, -65 * sizeMult); // Posizionata sopra la testa
+            
+            // 1. EFFETTO BAGLIORE (GLOW)
+            ctx.shadowBlur = 25;
+            ctx.shadowColor = '#FFD700'; 
+            
+            // 2. ANELLO INTERNO (Rotazione Lenta)
+            ctx.save();
+            let rotIn = (Date.now() / 400) % (Math.PI * 2);
+            ctx.rotate(rotIn);
             ctx.strokeStyle = '#FFD700';
             ctx.lineWidth = 4;
-            ctx.setLineDash([10, 5]);
             ctx.beginPath();
-            ctx.arc(0, 0, 15, 0, Math.PI * 2);
+            ctx.arc(0, 0, 16 * sizeMult, 0, Math.PI * 2);
             ctx.stroke();
+            ctx.restore();
+            
+            // 3. ANELLO ESTERNO (Frammentato, Rotazione Veloce Opposta)
+            ctx.save();
+            let rotOut = -(Date.now() / 250) % (Math.PI * 2);
+            ctx.rotate(rotOut);
+            ctx.strokeStyle = '#FFFFFF'; // Luce Bianca per contrasto
+            ctx.lineWidth = 2;
+            ctx.setLineDash([8, 12]);
+            ctx.beginPath();
+            ctx.arc(0, 0, 24 * sizeMult, 0, Math.PI * 2);
+            ctx.stroke();
+            
+            // 4. PUNTE DEL TITANO (Simboli Cardinali)
+            ctx.fillStyle = '#FFD700';
+            for (let i = 0; i < 4; i++) {
+                ctx.save();
+                ctx.rotate(i * Math.PI / 2);
+                ctx.beginPath();
+                ctx.moveTo(-4, -20 * sizeMult);
+                ctx.lineTo(4, -20 * sizeMult);
+                ctx.lineTo(0, -32 * sizeMult); // Punta aguzza
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore();
+            }
+            ctx.restore();
+            
+            // 5. EMISSIONE SCINTILLE (Piccolo chance per frame)
+            if (Math.random() > 0.92) {
+                createSparks(this.x + 20, this.y - 40, '#FFD700');
+            }
             ctx.restore();
         }
 
