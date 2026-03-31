@@ -1,0 +1,15 @@
+# Backups (Large Files)
+*.zip
+*.7z
+*.rar
+
+# Binaries
+*.exe
+*.dll
+
+# IDEs and OS
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+node_modules/
