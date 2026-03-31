@@ -2197,13 +2197,15 @@ class HeroAlly {
         this.isSaluting = false;
         this.saluteTimer = 0;
 
-        // -- COLORI RANDOM (MAI ARANCIONI) --
-        const hue = (Math.random() * 300) + 40; // Evita l'arancione (0-40)
-        this.mainColor = `hsl(${hue}, 80%, 50%)`;
-        this.shadowColor = `hsl(${hue}, 80%, 35%)`;
-        this.equipmentColor = `hsl(${(hue + 60) % 360}, 70%, 50%)`; // Colore contrastante per scudo/elsa
+        // -- COLORI RUSTICI (VILLANO/CONTADINO) --
+        const browns = ['#8B4513', '#A0522D', '#D2B48C', '#BC8F8F'];
+        const chosenBrown = browns[Math.floor(Math.random() * browns.length)];
+        this.mainColor = chosenBrown; 
+        this.shadowColor = '#4B2E1E'; // Marrone terra d'ombra
+        this.equipmentColor = '#bdc3c7'; // Metallo ferroso per la forca
         this.color = this.mainColor; 
         this.isAlly = true; 
+        this.hasShield = false; // I villani non hanno scudi ufficiali
         
         // --- NUOVI PARAMETRI DI COMPORTAMENTO (V2) ---
         this.followOffsetX = 0; 
@@ -2574,14 +2576,14 @@ class HeroAlly {
                 if (wallCheck) this.vy = -550;
             }
 
-            // Trigger Attacco (Portata e Precisione Berserker)
+            // Trigger Attacco (Portata della Forca - Stoccata)
             if (this.target && this.state === 'fight' && this.attackCooldown <= 0) {
                 let dToTarget = Math.abs(this.target.x - this.x);
-                if (dToTarget < 140) {
+                if (dToTarget < 160) { // Aumentata portata (Forca)
                     this.isAttacking = true;
                     this.attackTimer = this.attackDuration;
-                    this.attackCooldown = 0.2; // Raffica di colpi
-                    playSound('slash');
+                    this.attackCooldown = 0.4; // Colpi più lenti ma potenti
+                    playSound('slash'); // Suono di fendente per ora
                 }
             }
         }
@@ -2787,52 +2789,50 @@ class HeroAlly {
             ctx.restore();
         }
 
-        // --- SPADA MASTERWORK ALLEATO ---
+        // --- ARMA: LA FORCA (Pitchfork) ---
         ctx.save();
-        ctx.translate(0, -10);
-        ctx.rotate(armAngle);
-        drawBlock(-4, 0, 8, 22, this.mainColor); 
+        ctx.translate(0, -5); // Centro di rotazione braccio/fianco
         
-        ctx.translate(0, 20);
-        ctx.rotate(swordAngle);
+        let forkX = 0;
+        let forkRot = armAngle;
 
-        const eCol = this.equipmentColor;
-        ctx.fillStyle = '#333'; ctx.fillRect(-4, -40, 8, 8); // Pomolo
-        ctx.fillStyle = '#4B2E1E'; ctx.fillRect(-3, -36, 6, 30); // Manico
-        ctx.fillStyle = eCol; ctx.fillRect(-12, -6, 24, 8); // Guardia
+        if (this.isAttacking) {
+            let progress = (this.attackDuration - this.attackTimer) / this.attackDuration;
+            // Animazione STOCCATA (In avanti)
+            if (progress < 0.3) {
+                forkX = -progress * 25; // Carica indietro breve
+            } else if (progress < 0.7) {
+                let lungeP = (progress - 0.3) / 0.4;
+                forkX = -7.5 + (lungeP * 45); // Affondo rapido in avanti
+                forkRot = 0; // Punta dritto durante l'affondo
+            } else {
+                let returnP = (progress - 0.7) / 0.3;
+                forkX = 37.5 * (1 - returnP); // Ritorno alla posizione base
+            }
+        }
+
+        ctx.translate(forkX, 0); // Applica l'affondo
+        ctx.rotate(forkRot);
         
-        // Gemma
-        ctx.fillStyle = '#FFF'; ctx.fillRect(-2, -4, 4, 4);
-
-        // Lama
+        // MANICO (Lungo Legno)
+        ctx.fillStyle = '#4B2E1E';
+        ctx.fillRect(-3, -15, 6, 95); // Lungo manico
+        
+        // TESTA DELLA FORCA (Ferro)
+        ctx.translate(0, 80);
         ctx.fillStyle = '#bdc3c7';
-        ctx.beginPath();
-        ctx.moveTo(-5, 2); ctx.lineTo(5, 2); ctx.lineTo(5, 50); ctx.lineTo(0, 60); ctx.lineTo(-5, 50);
-        ctx.closePath(); ctx.fill();
+        
+        // Base traversale rinforzata
+        ctx.fillRect(-14, 0, 28, 5);
+        
+        // 3 PUNTE (Denti della forca)
+        ctx.fillRect(-14, 0, 3, 22); // Sinistra
+        ctx.fillRect(-1.5, -2, 3, 30); // Centrale (più lunga e pronunciata)
+        ctx.fillRect(11, 0, 3, 22); // Destra
+        
         ctx.restore();
 
-        // SCUDO ALLEATO (Kite Shield)
-        ctx.save();
-        let sSway = (this.isGrounded && Math.abs(this.vx) > 5) ? Math.sin(Date.now() / 150) * 2 : 0;
-        ctx.translate(this.direction === 1 ? sSway - 5 : -sSway + 5, 0);
-        
-        ctx.beginPath();
-        ctx.moveTo(-16, -18);
-        ctx.bezierCurveTo(-16, -22, 16, -22, 16, -18);
-        ctx.lineTo(16, 5);
-        ctx.quadraticCurveTo(16, 20, 0, 35);
-        ctx.quadraticCurveTo(-16, 20, -16, 5);
-        ctx.closePath();
-
-        ctx.fillStyle = this.shadowColor; ctx.fill();
-        ctx.strokeStyle = eCol; ctx.lineWidth = 3; ctx.stroke();
-        
-        // Emblema
-        ctx.fillStyle = eCol;
-        ctx.beginPath();
-        ctx.arc(0, 5, 6, 0, Math.PI*2);
-        ctx.fill();
-        ctx.restore();
+        // --- RIMOZIONE SCUDO (I villani combattono a due mani o senza scudo) ---
 
         ctx.restore(); // Fine Corpo
 
