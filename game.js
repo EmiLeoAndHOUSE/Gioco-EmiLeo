@@ -1431,6 +1431,10 @@ class Player {
         this.hasArmor = false; // Riduce i danni del 50%
         this.hasSupportScroll = false;
         this.lastSupportDay = 0;
+
+        // --- SISTEMA LEGENDARY BUFFS ---
+        this.buffType = null; // 'OVERCLOCK', 'LIFESTEAL', 'HALO'
+        this.buffTimer = 0;
         
         // --- PORTATA ATTACCO DINAMICA ---
         this.weaponRangeX = 85;
@@ -1440,9 +1444,31 @@ class Player {
         this.speedBoostTimer = 0; 
     }
 
-    update(dt, world) {
+    update(dt, world, enemies) {
         // --- LOGICA INPUT DIFENSIVA (PARATA) ---
         this.isParrying = (keys['ShiftLeft'] || keys['ShiftRight'] || keys['MouseRight']) && !this.isAttacking;
+
+        // --- GESTIONE LEGENDARY BUFFS ---
+        if (this.buffTimer > 0) {
+            this.buffTimer -= dt;
+            if (this.buffTimer <= 0) {
+                this.buffType = null;
+                showStyleTip("BONUS LEGENDARIO ESAURITO! ⏳");
+            }
+
+            // Effetti visivi continui
+            if (this.buffType === 'OVERCLOCK') {
+                createSparks(this.x + Math.random() * this.width, this.y + Math.random() * this.height, '#00FFFF');
+                this.attackDuration = 0.1; // Cyber Velocissimo
+            } else if (this.buffType === 'LIFESTEAL') {
+                createDust(this.x + this.width/2, this.y + this.height/2, 1, '#FF0000');
+            }
+        } else {
+            // Ripristino cooldown base
+            if (playerStyle === 'CYBER') this.attackDuration = 0.2;
+            else if (playerStyle === 'PALADIN') this.attackDuration = 0.8;
+            else this.attackDuration = 0.4;
+        }
 
         // --- OTTIMIZZAZIONE SPAZIALE: FILTRO DI PROSSIMITÀ (Culling) ---
         const scanRange = 1500;
@@ -1720,6 +1746,14 @@ class Player {
                             if (playerStyle === 'RONIN') {
                                 this.speedBoostTimer = 0.5; // Brezza del Guerriero ultra-rapida (0.5s)
                                 showStyleTip('FLOW ATTIVO: +30% VELOCITÀ 💨');
+                                
+                                // --- EFFETTO LIFESTEAL (HANNYA MASK) ---
+                                if (this.buffType === 'LIFESTEAL' && this.health < this.maxHealth) {
+                                    this.health = Math.min(this.maxHealth, this.health + 5);
+                                    createPixelDissolve(this.x, this.y, this.width, 20, ['#FF0000', '#FF4444']);
+                                    let hUI = document.getElementById('healthUI');
+                                    if (hUI) hUI.innerText = `Salute: ${Math.floor(this.health)}`;
+                                }
                             }
 
                             // --- DANNO EXTRA PALADINO ---
@@ -1954,6 +1988,33 @@ class Player {
         };
 
         // --- ESECUZIONE DISEGNO ---
+        // --- RENDERING AUREE LEGENDARY ---
+        if (this.buffType === 'OVERCLOCK') {
+            // Scia elettrica azzurra costante
+            if (Math.random() > 0.7) createSparks(this.x + Math.random()*40, this.y + Math.random()*80, '#00FFFF');
+        } else if (this.buffType === 'LIFESTEAL') {
+            // Fumo demoniaco rosso
+            ctx.save();
+            ctx.globalAlpha = 0.4 + Math.sin(Date.now()/200)*0.2;
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = '#FF0000';
+            drawBodyParts(true, '#800000'); // Aura rossa cupa
+            ctx.restore();
+        } else if (this.buffType === 'HALO') {
+            // Aureola del Titano (Disco Rotante Dorato)
+            ctx.save();
+            let rot = (Date.now() / 300) % (Math.PI * 2);
+            ctx.translate(0, -60 * sizeMult);
+            ctx.rotate(rot);
+            ctx.strokeStyle = '#FFD700';
+            ctx.lineWidth = 4;
+            ctx.setLineDash([10, 5]);
+            ctx.beginPath();
+            ctx.arc(0, 0, 15, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.restore();
+        }
+
         if (playerStyle === 'RONIN' && this.speedBoostTimer > 0) {
             drawBodyParts(true, '#FF3300'); // Aura a profilo rossa
             drawBodyParts(true, '#FFD700'); // Sottile aura interna dorata
@@ -2099,6 +2160,20 @@ class Player {
             
             // --- LOGICA SPECIALE: BARRIERA SACRA (PALADIN) ---
             if (this.isParrying) {
+                // --- EFFETTO ONDA D'URTO (AUREOLA TITANO) ---
+                if (this.buffType === 'HALO' && Math.random() > 0.95) {
+                    enemies.forEach(z => {
+                        let d = Math.abs(z.x - this.x);
+                        if (d < 250 && Math.abs(z.y - this.y) < 100) {
+                            z.vx = (z.x > this.x ? 1 : -1) * 800; // Spinta via fortissima
+                            z.vy = -300;
+                            createPixelDissolve(z.x, z.y, z.width, z.height, ['#FFD700', '#FFFACD']);
+                        }
+                    });
+                    playSound('jump', this.x, this.y);
+                    screenShake = 15;
+                }
+
                 if (playerStyle === 'PALADIN') {
                     ctx.save();
                     let pSize = 70 * sizeMult + Math.sin(Date.now() / 80) * 5;
@@ -4416,22 +4491,37 @@ function update(dt) {
         if (isNear) {
             currentInteractable = b;
 
-            // --- LOGICA AUTOMATICA: BAULI ---
+            // --- LOGICA AUTOMATICA: BAULI LEGENDARI ---
             if (b.type === 'chest' && !b.looted) {
-                // Collisione precisa sul baule
                 const onChest = player.x + player.width > b.x && player.x < b.x + b.width;
                 if (onChest) {
-                        if (!player.hasShield || (playerStyle !== 'PALADIN' && player.shieldDurability < 10)) {
-                            player.hasShield = true;
-                            player.shieldDurability = (playerStyle === 'PALADIN') ? 99999 : 5;
-                            playSound('wake', player.x, player.y);
-                        
-                        // EFFETTO GRAFICO PIXEL ART (Oro e Luce)
-                        createPixelDissolve(b.x, b.y, b.width, b.height, ['#FFD700', '#FFFACD', '#F0E68C']);
-                        createDust(b.x + b.width / 2, b.y, 20); // Esplosione di polvere dorata
-                        
-                        b.looted = true;
+                    // Determina il buff in base all'eroe
+                    let buffName = "";
+                    let colors = [];
+                    
+                    if (playerStyle === 'CYBER') {
+                        player.buffType = 'OVERCLOCK';
+                        buffName = "MODULO OVERCLOCK! ⚡";
+                        colors = ['#00FFFF', '#FFFFFF', '#0099FF'];
+                    } else if (playerStyle === 'RONIN') {
+                        player.buffType = 'LIFESTEAL';
+                        buffName = "MASCHERA HANNYA! 👺";
+                        colors = ['#FF0000', '#440000', '#FF4444'];
+                    } else if (playerStyle === 'PALADIN') {
+                        player.buffType = 'HALO';
+                        buffName = "AUREOLA DEL TITANO! 👑";
+                        colors = ['#FFD700', '#FFFACD', '#F0E68C'];
                     }
+                    
+                    player.buffTimer = 25; // Durata 25 secondi
+                    showStyleTip(`LEGGENDARIO: ${buffName}`);
+                    playSound('castle_loot', player.x, player.y);
+                    
+                    // Feedback visivo massiccio
+                    createPixelDissolve(b.x, b.y, b.width, b.height, colors, 40);
+                    screenShake = 20;
+
+                    b.looted = true;
                 }
             }
 
