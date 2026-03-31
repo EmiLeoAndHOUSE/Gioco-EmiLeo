@@ -4157,21 +4157,61 @@ class CollectibleItem {
 
         ctx.save();
         ctx.translate(sx + 20, sy + 20);
-        ctx.rotate(this.rotation);
         
-        // Effetto bagliore
-        ctx.shadowBlur = 15;
-        ctx.shadowColor = '#00ffcc';
+        // 1. EFFETTO ALONE SPIRITUALE (AURORA)
+        ctx.save();
+        let pulseGlow = 10 + Math.sin(Date.now() / 300) * 5;
+        ctx.shadowBlur = pulseGlow;
+        ctx.shadowColor = '#8E44AD'; // Viola Arcustico
         
-        // Diamante Stickman Style
-        ctx.fillStyle = '#00ffcc';
+        // 2. RENDERING GEMMA SFACCETTATA (CRYSTAL CUT)
+        // Disegniamo la gemma come un solido con facce diverse
+        const colors = ['#8E44AD', '#9B59B6', '#D2B4DE', '#5B2C6F'];
+        const drawFace = (pts, color) => {
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.moveTo(pts[0].x, pts[0].y);
+            pts.slice(1).forEach(p => ctx.lineTo(p.x, p.y));
+            ctx.closePath();
+            ctx.fill();
+        };
+
+        // Facce del cristallo (Coordinate relative al centro 0,0)
+        drawFace([{x:0, y:-22}, {x:12, y:-8}, {x:0, y:0}], colors[1]); // Top Right
+        drawFace([{x:0, y:-22}, {x:-12, y:-8}, {x:0, y:0}], colors[0]); // Top Left
+        drawFace([{x:12, y:-8}, {x:16, y:8}, {x:0, y:0}], colors[3]); // Mid Right
+        drawFace([{x:-12, y:-8}, {x:-16, y:8}, {x:0, y:0}], colors[2]); // Mid Left
+        drawFace([{x:16, y:8}, {x:0, y:22}, {x:0, y:0}], colors[0]); // Bottom Right
+        drawFace([{x:-16, y:8}, {x:0, y:22}, {x:0, y:0}], colors[1]); // Bottom Left
+
+        // 3. NUCLEO LUMINOSO (CORE)
+        let grad = ctx.createRadialGradient(0, 0, 0, 0, 0, 10);
+        grad.addColorStop(0, '#FFFFFF');
+        grad.addColorStop(0.6, '#00E5FF');
+        grad.addColorStop(1, 'rgba(0, 229, 255, 0)');
+        ctx.fillStyle = grad;
         ctx.beginPath();
-        ctx.moveTo(0, -20);
-        ctx.lineTo(15, 0);
-        ctx.lineTo(0, 20);
-        ctx.lineTo(-15, 0);
-        ctx.closePath();
+        ctx.arc(0, 0, 8, 0, Math.PI * 2);
         ctx.fill();
+        
+        ctx.restore();
+
+        // 4. ORBITALI SPIRITUALI (Fuochi fatui)
+        for (let i = 0; i < 3; i++) {
+            ctx.save();
+            let ang = (Date.now() / (400 + i * 100)) + (i * Math.PI * 2 / 3);
+            let rx = Math.cos(ang) * (20 + i * 5);
+            let ry = Math.sin(ang) * (15 + i * 3);
+            
+            ctx.translate(rx, ry);
+            ctx.fillStyle = (i === 1) ? '#FFFFFF' : '#00E5FF';
+            ctx.shadowBlur = 8;
+            ctx.shadowColor = '#00E5FF';
+            ctx.beginPath();
+            ctx.arc(0, 0, 3, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
         
         ctx.restore();
     }
