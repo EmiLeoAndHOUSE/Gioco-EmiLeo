@@ -16,6 +16,16 @@ function resize() {
 window.addEventListener('resize', resize);
 resize();
 
+// --- SUPPORTO PERFORMANCE: CULLING VISIVO ---
+// Verifica se un oggetto è all'interno della visuale della telecamera (con margine)
+function inView(x, y, w, h, buffer = 150) {
+    if (typeof camera === 'undefined') return true;
+    return (x + w + buffer > camera.x && 
+            x - buffer < camera.x + width &&
+            y + h + buffer > camera.y &&
+            y - buffer < camera.y + height);
+}
+
 // ==========================================
 // MACCHINA A STATI E AUDIO SYNTH
 // ==========================================
@@ -2617,6 +2627,9 @@ class HeroAlly {
         if (!this.isClimbing) {
             this.isGrounded = false;
             world.platforms.forEach(p => {
+                // --- OTTIMIZZAZIONE COLLISIONE: FILTRO PROSSIMITÀ ---
+                if (Math.abs(p.x - this.x) > 700) return; 
+                
                 if (p.isOneWay && this.vy < 0) return;
                 if (this.x + this.width > p.x && this.x < p.x + p.width) {
                     if (this.y + this.height > p.y && this.y + this.height < p.y + p.height + this.vy * dt + 10 && this.vy >= 0) {
@@ -2898,12 +2911,6 @@ class Zombie {
     }
 
     update(dt, world, player) {
-        // --- OTTIMIZZAZIONE SPAZIALE: FILTRO DI PROSSIMITÀ (Culling) ---
-        // Riduce drsticamente il peso dei calcoli sulle piattaforme (da migliaia a decine)
-        const scanRange = 1500;
-        const localPlatforms = world.platforms.filter(p => Math.abs(p.x - this.x) < scanRange);
-        const localInteractables = world.interactables.filter(i => Math.abs(i.x - this.x) < scanRange);
-
         if (this.isHit > 0) {
             this.isHit -= dt;
             // Se colpito mentre sale, cade dalla scala e ha un cooldown
@@ -3019,6 +3026,7 @@ class Zombie {
 
                         // 1. Cerca la scala più vicina che porti nella direzione giusta
                         world.interactables.forEach(i => {
+                            if (Math.abs(i.x - this.x) > 700) return;
                             if (i.type === 'ladder') {
                                 // SICUREZZA: Se è giorno e siamo sotto terra, non prendiamo scale verso l'alto (Suicidio)
                                 let isSunlightDanger = (timeOfDay > 5 && timeOfDay < 19 && this.y > 650 && i.y < 650);
@@ -3057,6 +3065,7 @@ class Zombie {
                     // --- IA DI NAVIGAZIONE CON SCALE (Lancio Arrampicata) ---
                     let nearLadder = null;
                     world.interactables.forEach(i => {
+                        if (Math.abs(i.x - this.x) > 150) return;
                         if (i.type === 'ladder') {
                             // Hitbox di aggancio scala leggermente più generosa per gli zombie
                             if (pCenterX > i.x - 30 && pCenterX < i.x + i.width + 30) {
@@ -3153,6 +3162,7 @@ class Zombie {
                         let obstacleAhead = false;
 
                         world.platforms.forEach(p => {
+                            if (Math.abs(p.x - this.x) > 200) return;
                             if (lookAheadX >= p.x && lookAheadX <= p.x + p.width) {
                                 if (p.y >= this.y + this.height - 30 && p.y <= this.y + this.height + 150) {
                                     hasFloor = true;
@@ -3216,9 +3226,11 @@ class Zombie {
             this.vy += this.gravity * dt;
         }
 
-        // 1. FISICA ORIZZONTALE & COLLISIONE
+        // 1. FISICA ORIZZONTALE & COLLISIONE (Ottimizzata)
         this.x += this.vx * dt;
-        localPlatforms.forEach(p => {
+        world.platforms.forEach(p => {
+            if (Math.abs(p.x - this.x) > 800) return;
+
             // "Piattaforme Unidirezionali" (One-Way) per Zombie
             let isOneWay = p.height <= 30 || p.isStairs || p.isBridge;
             if (isOneWay) return;
@@ -3243,6 +3255,8 @@ class Zombie {
         if (this.state !== 'digging' && this.state !== 'dead') {
             this.isGrounded = false;
             world.platforms.forEach(p => {
+                if (Math.abs(p.x - this.x) > 800) return;
+
                 if (this.x < p.x + p.width - 5 && this.x + this.width > p.x + 5) {
                     if (this.vy >= 0 && this.y + this.height >= p.y && this.y + this.height <= p.y + 20 + this.vy * dt) {
                         this.isGrounded = true;
@@ -4674,11 +4688,25 @@ function draw() {
     });
     ctx.globalAlpha = 1.0;
 
-    allies.forEach(a => a.draw(ctx, camera));
-    enemies.forEach(z => z.draw(ctx, camera)); // L'orda prima dello Stickman
-    projectiles.forEach(p => p.draw(ctx, camera)); // Disegna Shuriken
-    collectables.forEach(c => c.draw(ctx, camera));
-    humans.forEach(h => h.draw(ctx, camera));
+    allies.forEach(a => {
+        if (inView(a.x, a.y, a.width, a.height)) a.draw(ctx, camera);
+    });
+    
+    enemies.forEach(z => {
+        if (inView(z.x, z.y, z.width, z.height)) z.draw(ctx, camera);
+    });
+
+    projectiles.forEach(p => {
+        if (inView(p.x, p.y, 20, 20)) p.draw(ctx, camera);
+    });
+
+    collectables.forEach(c => {
+        if (inView(c.x, c.y, 30, 30)) c.draw(ctx, camera);
+    });
+
+    humans.forEach(h => {
+        if (inView(h.x, h.y, h.width, h.height)) h.draw(ctx, camera);
+    });
 
     // Lampeggio visura Sofferenza (Quando lo Zombie morde l'oscurità sanguina!)
     if (player.isHitTimer && player.isHitTimer > 0) {
