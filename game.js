@@ -18,8 +18,7 @@ function resize() {
     
     // Invalida i cache del mondo al ridimensionamento
     if (world) {
-        world.parallaxCache = null;
-        world.midParallaxCache = null;
+        // Al momento non usiamo cache nel nuovo motore di parallasse
     }
 }
 window.addEventListener('resize', resize);
@@ -599,13 +598,17 @@ class World {
         // --- SISTEMA GRID PER OTTIMIZZAZIONE ---
         this.gridSize = 2000; // Dimensione cella grid
         this.grid = {}; // { index: { platforms: [], decorations: [], interactables: [] } }
-
-        // --- CACHING PARALLASSE ---
-        this.parallaxCache = null;
-        this.lastCameraY = -1;
-
         this.initPatterns(ctx);
         this.generateWorld();
+    }
+
+    getHillHeight(x, layer = 'mid') {
+        // Genera un profilo collinare basato su onde sinusoidali sovrapposte
+        if (layer === 'far') {
+            return Math.sin(x * 0.0004) * 25 + Math.sin(x * 0.0011) * 10;
+        } else {
+            return Math.sin(x * 0.0008) * 20 + Math.sin(x * 0.0015) * 8;
+        }
     }
 
     addToGrid(obj, type) {
@@ -877,7 +880,7 @@ class World {
 
             let bgObj = {
                 x: bgX,
-                y: groundLevel,
+                y: 0, // Non usato: la Y viene calcolata dinamicamente in drawParallax
                 type: type,
                 width: width
             };
@@ -1059,95 +1062,46 @@ class World {
         }
     }
 
-    generateParallaxCache() {
-        if (!this.parallaxCache) {
-            this.parallaxCache = document.createElement('canvas');
-            this.parallaxCache.width = 800;
-            this.parallaxCache.height = 600;
-            let pCtx = this.parallaxCache.getContext('2d');
-
-            // 1. Far Hills (Scuri)
-            pCtx.fillStyle = '#3E2723';
-            pCtx.beginPath();
-            pCtx.ellipse(400, 110, 500, 200, 0, Math.PI, 0);
-            pCtx.fill();
-
-            // 2. Grass Layer (con pattern se disponibile)
-            if (typeof gfx !== 'undefined' && gfx.grass && gfx.grass.complete && gfx.grass.naturalWidth > 0) {
-                pCtx.fillStyle = pCtx.createPattern(gfx.grass, 'repeat');
-                pCtx.beginPath();
-                pCtx.ellipse(400, 80, 500, 200, 0, Math.PI, 0);
-                pCtx.fill();
-            } else {
-                pCtx.fillStyle = '#4a7023';
-                pCtx.beginPath();
-                pCtx.ellipse(400, 80, 500, 200, 0, Math.PI, 0);
-                pCtx.fill();
-            }
-
-            // 3. Shading
-            pCtx.fillStyle = 'rgba(0, 0, 0, 0.55)';
-            pCtx.beginPath();
-            pCtx.ellipse(400, 80, 500, 200, 0, Math.PI, 0);
-            pCtx.fill();
-        }
-        
-        if (!this.midParallaxCache) {
-            this.midParallaxCache = document.createElement('canvas');
-            this.midParallaxCache.width = 800;
-            this.midParallaxCache.height = 200;
-            let mCtx = this.midParallaxCache.getContext('2d');
-
-            // 1. Mid Layer
-            mCtx.fillStyle = '#26150D';
-            mCtx.fillRect(0, 20, 800, 180);
-
-            if (typeof gfx !== 'undefined' && gfx.grass && gfx.grass.complete && gfx.grass.naturalWidth > 0) {
-                mCtx.fillStyle = mCtx.createPattern(gfx.grass, 'repeat');
-                mCtx.beginPath();
-                mCtx.ellipse(400, 25, 450, 40, 0, Math.PI, 0);
-                mCtx.fill();
-            } else {
-                mCtx.fillStyle = '#3a6015';
-                mCtx.fillRect(0, 15, 800, 10);
-            }
-
-            mCtx.fillStyle = 'rgba(0, 0, 0, 0.35)';
-            mCtx.beginPath();
-            mCtx.ellipse(400, 25, 450, 40, 0, Math.PI, 0);
-            mCtx.fill();
-        }
-    }
 
     drawParallax(ctx, camera) {
-        this.generateParallaxCache();
-        let parallaxFactor = 0.5;
-        let horizonY = 600 - camera.y;
+        let farFactor = 0.2;
+        let midFactor = 0.5;
+        let horizonY = 450 - camera.y;
 
-        // --- BACKGROUND RECT ---
-        ctx.fillStyle = '#3E2723';
-        ctx.fillRect(0, horizonY, canvas.width, 2000);
-
-        // --- DRAW FAR HILLS (Cached) ---
-        let hillOffsetX = (camera.x * 0.2) % 800;
-        for (let i = -1; i <= Math.ceil(canvas.width / 800) + 1; i++) {
-            ctx.drawImage(this.parallaxCache, (i * 800) - hillOffsetX, horizonY);
+        // Una sola layer di colline: cielo -> colline verdi, nessun layer grigio intermedio
+        ctx.beginPath();
+        ctx.moveTo(-1, canvas.height);
+        for (let x = 0; x <= canvas.width; x += 20) {
+            let worldX = (camera.x * midFactor) + x;
+            let hillY = horizonY + this.getHillHeight(worldX, 'mid');
+            ctx.lineTo(x, hillY);
         }
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
-        ctx.fillRect(0, horizonY + 80, canvas.width, 2000);
+        ctx.lineTo(canvas.width + 1, canvas.height);
+        ctx.closePath();
 
-        // --- DRAW MID HILLS (Cached) ---
-        let midOffsetX = (camera.x * parallaxFactor) % 800;
-        let midHorizonY = horizonY + 10;
-        for (let i = -1; i <= Math.ceil(canvas.width / 800) + 1; i++) {
-            ctx.drawImage(this.midParallaxCache, (i * 800) - midOffsetX, midHorizonY);
+        // Pattern erba con tinta scura per differenziarsi dal primo piano
+        if (typeof gfx !== 'undefined' && gfx.grass && gfx.grass.complete && gfx.grass.naturalWidth > 0) {
+            ctx.save();
+            let grassPattern = ctx.createPattern(gfx.grass, 'repeat');
+            ctx.fillStyle = grassPattern;
+            ctx.fill();
+            ctx.fillStyle = 'rgba(20, 35, 20, 0.78)'; // Tinta verde scura per dare profondita'
+            ctx.fill();
+            ctx.restore();
+        } else {
+            ctx.fillStyle = '#3A4D3A';
+            ctx.fill();
         }
-        ctx.fillStyle = '#26150D';
-        ctx.fillRect(0, midHorizonY + 180, canvas.width, 2000);
+
+        // Bordo netto in cima alle colline
+        ctx.strokeStyle = '#4A7A4A';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+
 
         // --- ENTITIES FROM GRID ---
-        let startIdx = Math.floor((camera.x * parallaxFactor) / this.gridSize);
-        let endIdx = Math.floor(((camera.x * parallaxFactor) + canvas.width) / this.gridSize);
+        let startIdx = Math.floor((camera.x * midFactor) / this.gridSize);
+        let endIdx = Math.floor(((camera.x * midFactor) + canvas.width) / this.gridSize);
 
         let seen = new Set();
         for (let i = startIdx; i <= endIdx; i++) {
@@ -1157,8 +1111,11 @@ class World {
                     if (seen.has(bg)) return;
                     seen.add(bg);
 
-                    let screenX = bg.x - (camera.x * parallaxFactor);
-                    let screenY = bg.y - camera.y + 30;
+                    let screenX = bg.x - (camera.x * midFactor);
+                    // Calcolo la Y della collina ESATTAMENTE come viene disegnata,
+                    // per garantire perfetta integrazione tra oggetto e terreno
+                    let hillSurfaceY = horizonY + this.getHillHeight((camera.x * midFactor) + screenX, 'mid');
+                    let screenY = hillSurfaceY; // L'oggetto poggia esattamente sulla superficie
 
                     if (screenX + bg.width > 0 && screenX < canvas.width) {
                         if (bg.type === 'tree') {
