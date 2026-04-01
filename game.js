@@ -7,11 +7,20 @@ const ctx = canvas.getContext('2d');
 
 let width, height;
 
+let world = null;
+let player = null;
+
 function resize() {
     width = window.innerWidth;
     height = window.innerHeight;
     canvas.width = width;
     canvas.height = height;
+    
+    // Invalida i cache del mondo al ridimensionamento
+    if (world) {
+        world.parallaxCache = null;
+        world.midParallaxCache = null;
+    }
 }
 window.addEventListener('resize', resize);
 resize();
@@ -575,8 +584,6 @@ class Projectile {
         ctx.restore();
     }
 }
-// Disabilita Menu Contestuale per permettere la parata con tasto destro
-window.addEventListener('contextmenu', e => e.preventDefault());
 
 // ==========================================
 // 3. CLASSE WORLD (Generazione Procedurale e Strutture)
@@ -587,12 +594,28 @@ class World {
         this.backgrounds = [];
         this.interactables = [];
         this.decorations = [];
-        this.mapWidth = 100000; // Definizione larghezza mondo
+        this.mapWidth = 100000;
+        
+        // --- SISTEMA GRID PER OTTIMIZZAZIONE ---
+        this.gridSize = 2000; // Dimensione cella grid
+        this.grid = {}; // { index: { platforms: [], decorations: [], interactables: [] } }
 
-        // --- INIZIALIZZAZIONE PATTERN PIXEL ART ---
+        // --- CACHING PARALLASSE ---
+        this.parallaxCache = null;
+        this.lastCameraY = -1;
+
         this.initPatterns(ctx);
-
         this.generateWorld();
+    }
+
+    addToGrid(obj, type) {
+        let startIdx = Math.floor(obj.x / this.gridSize);
+        let endIdx = Math.floor((obj.x + (obj.width || 0)) / this.gridSize);
+        
+        for (let i = startIdx; i <= endIdx; i++) {
+            if (!this.grid[i]) this.grid[i] = { platforms: [], decorations: [], interactables: [], backgrounds: [] };
+            this.grid[i][type].push(obj);
+        }
     }
 
     initPatterns(ctx) {
@@ -852,12 +875,14 @@ class World {
                 width = 150;
             }
 
-            this.backgrounds.push({
+            let bgObj = {
                 x: bgX,
                 y: groundLevel,
                 type: type,
                 width: width
-            });
+            };
+            this.backgrounds.push(bgObj);
+            this.addToGrid(bgObj, 'backgrounds');
 
             bgX += width + Math.random() * 400 + 100;
         }
@@ -867,7 +892,9 @@ class World {
 
             // 1. Pianura di base
             let plainLength = 600 + Math.random() * 800;
-            this.platforms.push({ x: currentX, y: groundLevel, width: plainLength, height: 800 });
+            let plat = { x: currentX, y: groundLevel, width: plainLength, height: 800 };
+            this.platforms.push(plat);
+            this.addToGrid(plat, 'platforms');
 
             // 2. Edifici fisici esplorabili
             if (plainLength > 800 && Math.random() > 0.6) {
@@ -878,22 +905,30 @@ class World {
                 let bY = groundLevel - bHeight;
 
                 // Hitbox del tetto
-                this.platforms.push({ x: bX, y: bY, width: bWidth, height: 20 });
+                let roof = { x: bX, y: bY, width: bWidth, height: 20 };
+                this.platforms.push(roof);
+                this.addToGrid(roof, 'platforms');
 
-                this.interactables.push({
+                let inter = {
                     x: bX, y: bY, width: bWidth, height: bHeight,
                     type: isCastle ? 'castle' : 'house',
                     doorX: bX + bWidth / 2 - 30,
                     doorWidth: 60,
                     looted: false
-                });
+                };
+                this.interactables.push(inter);
+                this.addToGrid(inter, 'interactables');
             }
 
             // 3. Piattaforme fluttuanti (Jump challenge)
             if (Math.random() > 0.4) {
-                this.platforms.push({ x: currentX + 200, y: groundLevel - 150, width: 200, height: 20 });
+                let p1 = { x: currentX + 200, y: groundLevel - 150, width: 200, height: 20 };
+                this.platforms.push(p1);
+                this.addToGrid(p1, 'platforms');
                 if (Math.random() > 0.5) {
-                    this.platforms.push({ x: currentX + 500, y: groundLevel - 280, width: 150, height: 20 });
+                    let p2 = { x: currentX + 500, y: groundLevel - 280, width: 150, height: 20 };
+                    this.platforms.push(p2);
+                    this.addToGrid(p2, 'platforms');
                 }
             }
 
@@ -916,6 +951,7 @@ class World {
                     let plat = { x: px, y: currentY, width: pw, height: 20, isStairs: true };
                     cavePlatforms.push(plat);
                     this.platforms.push(plat);
+                    this.addToGrid(plat, 'platforms');
 
                     currentY -= 110; // Salto verticale fisso, attraversabile dal basso grazie al motore pass-through
                     side *= -1;
@@ -923,12 +959,14 @@ class World {
 
                 // Ponte in legno per i crepacci molto larghi
                 if (gapWidth > 800) {
-                    this.platforms.push({
+                    let bridge = {
                         x: currentX + gapWidth / 2 - 200,
                         y: groundLevel - 40,
                         width: 400, height: 15,
                         isBridge: true
-                    });
+                    };
+                    this.platforms.push(bridge);
+                    this.addToGrid(bridge, 'platforms');
                 }
 
                 // --- SCALA A PIOLI MINERARIA ---
@@ -937,13 +975,15 @@ class World {
                 // La scala termina ora esattamente al livello del fondo grotta (caveDepth)
                 let ladderHeight = caveDepth - ladderY; 
 
-                this.interactables.push({
+                let ladder = {
                     type: 'ladder',
                     x: ladderX,
                     y: ladderY,
                     width: 40,
                     height: ladderHeight
-                });
+                };
+                this.interactables.push(ladder);
+                this.addToGrid(ladder, 'interactables');
 
                 // Pareti di Roccia rimosse per pulire visivamente e fisicamente la grotta
 
@@ -952,20 +992,24 @@ class World {
                 // Pavimento Organico
                 let stepW = 150;
                 for (let ix = 0; ix < gapWidth; ix += stepW) {
-                    this.platforms.push({
+                    let cPlat = {
                         x: currentX + ix, y: caveDepth + (Math.random() - 0.5) * 40,
                         width: stepW + 10, height: 800, isCave: true
-                    });
+                    };
+                    this.platforms.push(cPlat);
+                    this.addToGrid(cPlat, 'platforms');
                 }
 
                 // --- VITA & DECORAZIONI ---
                 let numMinerals = Math.floor(gapWidth / 60);
                 for (let i = 0; i < numMinerals; i++) {
                     let mColors = ['#444', '#CCC', '#FFD700'];
-                    this.decorations.push({
+                    let deco = {
                         type: 'mineral', color: mColors[Math.floor(Math.random() * 3)],
                         x: currentX + Math.random() * gapWidth, y: caveDepth + Math.random() * 400, size: 4 + Math.random() * 6
-                    });
+                    };
+                    this.decorations.push(deco);
+                    this.addToGrid(deco, 'decorations');
                 }
 
                 let numCaveZombies = Math.floor(gapWidth / 300) + 1;
@@ -977,31 +1021,37 @@ class World {
                 // Stalattiti agganciate alle nuove piattaforme procedurali
                 cavePlatforms.forEach(plat => {
                     if (Math.random() > 0.4) {
-                        this.decorations.push({
+                        let stala = {
                             type: 'stalactite', x: plat.x + 10 + Math.random() * (plat.width - 20), y: plat.y + plat.height, scale: 0.8 + Math.random()
-                        });
+                        };
+                        this.decorations.push(stala);
+                        this.addToGrid(stala, 'decorations');
                     }
                 });
 
                 // Cristalli extra nel profondo
                 let numCrystals = Math.floor(gapWidth / 150) + 2;
                 for (let i = 0; i < numCrystals; i++) {
-                    this.decorations.push({
+                    let crystal = {
                         type: 'crystal', color: ['#00FFFF', '#FF00FF', '#7FFF00'][Math.floor(Math.random() * 3)],
                         x: currentX + Math.random() * gapWidth, y: caveDepth + (Math.random() - 0.5) * 100, scale: 0.7 + Math.random() * 1.3
-                    });
+                    };
+                    this.decorations.push(crystal);
+                    this.addToGrid(crystal, 'decorations');
                 }
 
                 // --- BAULI DEL TESORO (Chest Spawning) ---
                 if (Math.random() > 0.6) {
-                    this.interactables.push({
+                    let chest = {
                         type: 'chest',
                         looted: false,
                         x: currentX + Math.random() * (gapWidth - 60),
                         y: caveDepth - 50,
                         width: 60, height: 50,
                         doorX: currentX, doorWidth: gapWidth // Area di interazione
-                    });
+                    };
+                    this.interactables.push(chest);
+                    this.addToGrid(chest, 'interactables');
                 }
 
                 currentX += gapWidth;
@@ -1009,137 +1059,174 @@ class World {
         }
     }
 
+    generateParallaxCache() {
+        if (!this.parallaxCache) {
+            this.parallaxCache = document.createElement('canvas');
+            this.parallaxCache.width = 800;
+            this.parallaxCache.height = 600;
+            let pCtx = this.parallaxCache.getContext('2d');
+
+            // 1. Far Hills (Scuri)
+            pCtx.fillStyle = '#3E2723';
+            pCtx.beginPath();
+            pCtx.ellipse(400, 110, 500, 200, 0, Math.PI, 0);
+            pCtx.fill();
+
+            // 2. Grass Layer (con pattern se disponibile)
+            if (typeof gfx !== 'undefined' && gfx.grass && gfx.grass.complete && gfx.grass.naturalWidth > 0) {
+                pCtx.fillStyle = pCtx.createPattern(gfx.grass, 'repeat');
+                pCtx.beginPath();
+                pCtx.ellipse(400, 80, 500, 200, 0, Math.PI, 0);
+                pCtx.fill();
+            } else {
+                pCtx.fillStyle = '#4a7023';
+                pCtx.beginPath();
+                pCtx.ellipse(400, 80, 500, 200, 0, Math.PI, 0);
+                pCtx.fill();
+            }
+
+            // 3. Shading
+            pCtx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+            pCtx.beginPath();
+            pCtx.ellipse(400, 80, 500, 200, 0, Math.PI, 0);
+            pCtx.fill();
+        }
+        
+        if (!this.midParallaxCache) {
+            this.midParallaxCache = document.createElement('canvas');
+            this.midParallaxCache.width = 800;
+            this.midParallaxCache.height = 200;
+            let mCtx = this.midParallaxCache.getContext('2d');
+
+            // 1. Mid Layer
+            mCtx.fillStyle = '#26150D';
+            mCtx.fillRect(0, 20, 800, 180);
+
+            if (typeof gfx !== 'undefined' && gfx.grass && gfx.grass.complete && gfx.grass.naturalWidth > 0) {
+                mCtx.fillStyle = mCtx.createPattern(gfx.grass, 'repeat');
+                mCtx.beginPath();
+                mCtx.ellipse(400, 25, 450, 40, 0, Math.PI, 0);
+                mCtx.fill();
+            } else {
+                mCtx.fillStyle = '#3a6015';
+                mCtx.fillRect(0, 15, 800, 10);
+            }
+
+            mCtx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+            mCtx.beginPath();
+            mCtx.ellipse(400, 25, 450, 40, 0, Math.PI, 0);
+            mCtx.fill();
+        }
+    }
+
     drawParallax(ctx, camera) {
+        this.generateParallaxCache();
         let parallaxFactor = 0.5;
-
         let horizonY = 600 - camera.y;
-        let hillOffsetX = (camera.x * 0.2) % 800;
 
+        // --- BACKGROUND RECT ---
         ctx.fillStyle = '#3E2723';
         ctx.fillRect(0, horizonY, canvas.width, 2000);
 
-        ctx.beginPath();
+        // --- DRAW FAR HILLS (Cached) ---
+        let hillOffsetX = (camera.x * 0.2) % 800;
         for (let i = -1; i <= Math.ceil(canvas.width / 800) + 1; i++) {
-            let cx = (i * 800) - hillOffsetX + 400;
-            ctx.ellipse(cx, horizonY + 110, 500, 200, 0, Math.PI, 0);
+            ctx.drawImage(this.parallaxCache, (i * 800) - hillOffsetX, horizonY);
         }
-        ctx.fill();
-
-        if (typeof gfx !== 'undefined' && gfx.grass && gfx.grass.complete && gfx.grass.naturalWidth > 0) {
-            ctx.fillStyle = ctx.createPattern(gfx.grass, 'repeat');
-            ctx.save();
-            ctx.translate(-hillOffsetX, 0);
-            ctx.beginPath();
-            for (let i = -2; i <= Math.ceil(canvas.width / 800) + 2; i++) {
-                let cx = (i * 800) + 400;
-                ctx.ellipse(cx, horizonY + 80, 500, 200, 0, Math.PI, 0);
-            }
-            ctx.fill();
-            ctx.restore();
-        } else {
-            ctx.fillStyle = '#4a7023';
-            ctx.beginPath();
-            for (let i = -1; i <= Math.ceil(canvas.width / 800) + 1; i++) {
-                let cx = (i * 800) - hillOffsetX + 400;
-                ctx.ellipse(cx, horizonY + 80, 500, 200, 0, Math.PI, 0);
-            }
-            ctx.fill();
-        }
-
         ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
-        ctx.beginPath();
-        for (let i = -1; i <= Math.ceil(canvas.width / 800) + 1; i++) {
-            let cx = (i * 800) - hillOffsetX + 400;
-            ctx.ellipse(cx, horizonY + 80, 500, 200, 0, Math.PI, 0);
-        }
-        ctx.fill();
         ctx.fillRect(0, horizonY + 80, canvas.width, 2000);
 
-        // LAYER MEDIANO
+        // --- DRAW MID HILLS (Cached) ---
         let midOffsetX = (camera.x * parallaxFactor) % 800;
-        let midHorizonY = horizonY + 30;
-
-        ctx.fillStyle = '#26150D';
-        ctx.fillRect(0, midHorizonY, canvas.width, 2000);
-
-        if (typeof gfx !== 'undefined' && gfx.grass && gfx.grass.complete && gfx.grass.naturalWidth > 0) {
-            ctx.fillStyle = ctx.createPattern(gfx.grass, 'repeat');
-            ctx.save();
-            ctx.translate(-midOffsetX, 0);
-            ctx.beginPath();
-            for (let i = -2; i <= Math.ceil(canvas.width / 800) + 2; i++) {
-                let cx = (i * 800) + 400;
-                ctx.ellipse(cx, midHorizonY + 5, 450, 40, 0, Math.PI, 0);
-            }
-            ctx.fill();
-            ctx.restore();
-        } else {
-            ctx.fillStyle = '#3a6015';
-            ctx.fillRect(0, midHorizonY - 10, canvas.width, 10);
-        }
-
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
-        ctx.beginPath();
+        let midHorizonY = horizonY + 10;
         for (let i = -1; i <= Math.ceil(canvas.width / 800) + 1; i++) {
-            let cx = (i * 800) - midOffsetX + 400;
-            ctx.ellipse(cx, midHorizonY + 5, 450, 40, 0, Math.PI, 0);
+            ctx.drawImage(this.midParallaxCache, (i * 800) - midOffsetX, midHorizonY);
         }
-        ctx.fill();
+        ctx.fillStyle = '#26150D';
+        ctx.fillRect(0, midHorizonY + 180, canvas.width, 2000);
 
-        this.backgrounds.forEach(bg => {
-            let screenX = bg.x - (camera.x * parallaxFactor);
-            let screenY = bg.y - camera.y + 30;
+        // --- ENTITIES FROM GRID ---
+        let startIdx = Math.floor((camera.x * parallaxFactor) / this.gridSize);
+        let endIdx = Math.floor(((camera.x * parallaxFactor) + canvas.width) / this.gridSize);
 
-            if (screenX + bg.width > 0 && screenX < canvas.width) {
-                if (bg.type === 'tree') {
-                    let cx = screenX + bg.width / 2;
-                    let cy = screenY;
+        let seen = new Set();
+        for (let i = startIdx; i <= endIdx; i++) {
+            let cell = this.grid[i];
+            if (cell && cell.backgrounds) {
+                cell.backgrounds.forEach(bg => {
+                    if (seen.has(bg)) return;
+                    seen.add(bg);
 
-                    ctx.fillStyle = '#1A1100';
-                    ctx.fillRect(cx - 14, cy - 112, 28, 114);
-                    ctx.fillStyle = '#3E2723';
-                    ctx.fillRect(cx - 12, cy - 110, 24, 110);
-                    ctx.fillStyle = '#5D4037';
-                    ctx.fillRect(cx - 12, cy - 110, 8, 110);
-                    ctx.fillStyle = '#2A1810';
-                    ctx.fillRect(cx - 2, cy - 90, 10, 8);
-                    ctx.fillRect(cx - 8, cy - 50, 8, 8);
-                    ctx.fillRect(cx, cy - 20, 10, 8);
+                    let screenX = bg.x - (camera.x * parallaxFactor);
+                    let screenY = bg.y - camera.y + 30;
 
-                    let leavesPos = [
-                        { x: -45, y: -130, w: 90, h: 40 },
-                        { x: -65, y: -160, w: 130, h: 50 },
-                        { x: -55, y: -190, w: 110, h: 50 },
-                        { x: -35, y: -220, w: 70, h: 50 },
-                        { x: -15, y: -240, w: 30, h: 30 }
-                    ];
+                    if (screenX + bg.width > 0 && screenX < canvas.width) {
+                        if (bg.type === 'tree') {
+                            let cx = screenX + bg.width / 2;
+                            let cy = screenY;
 
-                    leavesPos.forEach(leaf => {
-                        ctx.fillStyle = '#051A05';
-                        ctx.fillRect(cx + leaf.x - 2, cy + leaf.y - 2, leaf.w + 4, leaf.h + 4);
-                        ctx.fillStyle = '#1B5E20';
-                        ctx.fillRect(cx + leaf.x, cy + leaf.y, leaf.w, leaf.h);
-                        ctx.fillStyle = '#2E7D32';
-                        ctx.fillRect(cx + leaf.x + 2, cy + leaf.y + 2, leaf.w - 10, leaf.h / 2.5);
-                    });
+                            ctx.fillStyle = '#1A1100';
+                            ctx.fillRect(cx - 14, cy - 112, 28, 114);
+                            ctx.fillStyle = '#3E2723';
+                            ctx.fillRect(cx - 12, cy - 110, 24, 110);
+                            ctx.fillStyle = '#5D4037';
+                            ctx.fillRect(cx - 12, cy - 110, 8, 110);
+                            ctx.fillStyle = '#2A1810';
+                            ctx.fillRect(cx - 2, cy - 90, 10, 8);
+                            ctx.fillRect(cx - 8, cy - 50, 8, 8);
+                            ctx.fillRect(cx, cy - 20, 10, 8);
 
-                } else if (bg.type === 'house') {
-                    this.renderFantasyHouse(ctx, screenX, screenY - 120, bg.width, 120, true, false);
-                } else if (bg.type === 'castle') {
-                    this.renderCastlevania(ctx, screenX, screenY - 250, bg.width, 250, true, false);
-                }
+                            let leavesPos = [
+                                { x: -45, y: -130, w: 90, h: 40 },
+                                { x: -65, y: -160, w: 130, h: 50 },
+                                { x: -55, y: -190, w: 110, h: 50 },
+                                { x: -35, y: -220, w: 70, h: 50 },
+                                { x: -15, y: -240, w: 30, h: 30 }
+                            ];
+
+                            leavesPos.forEach(leaf => {
+                                ctx.fillStyle = '#051A05';
+                                ctx.fillRect(cx + leaf.x - 2, cy + leaf.y - 2, leaf.w + 4, leaf.h + 4);
+                                ctx.fillStyle = '#1B5E20';
+                                ctx.fillRect(cx + leaf.x, cy + leaf.y, leaf.w, leaf.h);
+                                ctx.fillStyle = '#2E7D32';
+                                ctx.fillRect(cx + leaf.x + 2, cy + leaf.y + 2, leaf.w - 10, leaf.h / 2.5);
+                            });
+
+                        } else if (bg.type === 'house') {
+                            this.renderFantasyHouse(ctx, screenX, screenY - 120, bg.width, 120, true, false);
+                        } else if (bg.type === 'castle') {
+                            this.renderCastlevania(ctx, screenX, screenY - 250, bg.width, 250, true, false);
+                        }
+                    }
+                });
             }
-        });
+        }
     }
 
     drawForeground(ctx, camera) {
+        let startIdx = Math.floor(camera.x / this.gridSize);
+        let endIdx = Math.floor((camera.x + canvas.width) / this.gridSize);
+
+        let visiblePlatforms = [];
+        let visibleDecorations = [];
+        let visibleInteractables = [];
+        let seen = new Set();
+
+        for (let i = startIdx - 1; i <= endIdx + 1; i++) {
+            let cell = this.grid[i];
+            if (cell) {
+                cell.platforms.forEach(p => { if (!seen.has(p)) { seen.add(p); visiblePlatforms.push(p); } });
+                cell.decorations.forEach(d => { if (!seen.has(d)) { seen.add(d); visibleDecorations.push(d); } });
+                cell.interactables.forEach(it => { if (!seen.has(it)) { seen.add(it); visibleInteractables.push(it); } });
+            }
+        }
+
         // --- 1. FONDO GROTTA (PROFONDITÀ 3D E MASCHERAMENTO) ---
-        this.platforms.forEach(plat => {
+        visiblePlatforms.forEach(plat => {
             if (plat.isCave) {
-                // Allargamento maschera per coprire le pareti jagged (da 60 a 120px)
-                // Maschera parte ESATTAMENTE dal livello del suolo (groundLevel) per non coprire il cielo
                 let maskX = plat.x - camera.x - 120;
-                let maskY = (600 - camera.y); // Fissa al GroundLevel
+                let maskY = (600 - camera.y);
                 let maskW = plat.width + 240;
                 let maskH = 2000;
 
@@ -1147,21 +1234,14 @@ class World {
                     ctx.fillStyle = '#050505';
                     ctx.fillRect(maskX, maskY, maskW, maskH);
 
-                    // Parallasse interno fissato alla struttura
                     let screenX = plat.x - camera.x;
-
                     ctx.save();
                     ctx.fillStyle = this.caveBgPattern;
-                    // Il pattern segue la grotta ma con un offset di parallasse calcolato dal centro
                     let offsetX = (plat.x - camera.x) * 0.05;
                     ctx.translate(offsetX, 0);
-                    // Disegniamo il pattern partendo *esattamente* dal livello dell'erba (600 - camera.y)
-                    // per evitare che copra il cielo e le case sullo sfondo.
                     ctx.fillRect(screenX - offsetX, (600 - camera.y), plat.width, 2000);
                     ctx.restore();
 
-                    // --- OMBRA SUL SOFFITTO (Transizione verso la grotta) ---
-                    // Parte dal terreno (600) ad opacità 0.9 e sfuma verso il basso
                     let grad = ctx.createLinearGradient(0, (600 - camera.y), 0, plat.y - camera.y);
                     grad.addColorStop(0, 'rgba(0,0,0,0.9)');
                     grad.addColorStop(1, 'rgba(0,0,0,0)');
@@ -1172,36 +1252,30 @@ class World {
         });
 
         // --- 2. PIATTAFORME E PARETI ---
-        this.platforms.forEach(plat => {
+        visiblePlatforms.forEach(plat => {
             let screenX = plat.x - camera.x;
             let screenY = plat.y - camera.y;
 
             if (screenX + plat.width > 0 && screenX < canvas.width) {
-
                 if (plat.isCave || plat.isWall) {
                     ctx.save();
                     ctx.translate(screenX, screenY);
                     ctx.fillStyle = this.stonePattern;
                     ctx.fillRect(0, 0, plat.width, plat.height);
-
-                    // Crepe sui bordi dei blocchi
                     ctx.strokeStyle = '#0D0D14';
                     ctx.lineWidth = 2;
                     ctx.strokeRect(0, 0, plat.width, plat.height);
                     ctx.restore();
                 } else {
-                    let dirtColor = '#3E2723';
-                    ctx.fillStyle = dirtColor;
+                    ctx.fillStyle = '#3E2723';
                     ctx.fillRect(screenX, screenY, plat.width, plat.height);
                 }
 
                 if (!plat.isCave && !plat.isWall) {
                     let grassThickness = Math.min(40, plat.height);
-
                     if (typeof gfx !== 'undefined' && gfx.grass && gfx.grass.complete && gfx.grass.naturalWidth > 0) {
                         let pattern = ctx.createPattern(gfx.grass, 'repeat');
                         ctx.fillStyle = pattern;
-
                         ctx.save();
                         ctx.translate(screenX, screenY);
                         ctx.fillRect(0, 0, plat.width, grassThickness);
@@ -1214,8 +1288,8 @@ class World {
             }
         });
 
-        // --- 3. DECORAZIONI (FUNGHI, LIANE, MINERALI) ---
-        this.decorations.forEach(dec => {
+        // --- 3. DECORAZIONI ---
+        visibleDecorations.forEach(dec => {
             let screenX = dec.x - camera.x;
             let screenY = dec.y - camera.y;
 
@@ -1235,54 +1309,45 @@ class World {
                     ctx.save();
                     ctx.translate(screenX, screenY);
                     ctx.scale(dec.scale, dec.scale);
-
-                    // Glow Voxel Neon
                     ctx.shadowColor = '#00FFCC';
                     ctx.shadowBlur = 10 + Math.sin(Date.now() / 500) * 5;
-
                     ctx.fillStyle = '#DEDEDE';
-                    ctx.fillRect(-1, -10, 2, 10); // Gambo pixel
-
+                    ctx.fillRect(-1, -10, 2, 10);
                     ctx.fillStyle = '#00FFCC';
-                    ctx.fillRect(-6, -14, 12, 4); // Cappello pixel
+                    ctx.fillRect(-6, -14, 12, 4);
                     ctx.fillRect(-4, -16, 8, 2);
-
                     ctx.restore();
                 } else if (dec.type === 'mineral') {
                     ctx.save();
                     ctx.translate(screenX, screenY);
-                    ctx.rotate(Math.PI / 4); // Effetto diamante
+                    ctx.rotate(Math.PI / 4);
                     ctx.fillStyle = dec.color;
                     ctx.fillRect(-dec.size / 2, -dec.size / 2, dec.size, dec.size);
-                    // Brillocco
                     ctx.fillStyle = 'white';
                     ctx.fillRect(-dec.size / 4, -dec.size / 4, dec.size / 4, dec.size / 4);
                     ctx.restore();
                 } else if (dec.type === 'vine') {
                     ctx.save();
                     ctx.translate(screenX, screenY);
-                    ctx.fillStyle = '#1A3311'; // Verde scuro liana
+                    ctx.fillStyle = '#1A3311';
                     let segments = Math.floor(dec.length / 10);
                     for (let i = 0; i < segments; i++) {
                         let sway = Math.sin(Date.now() / 1000 + i / 5) * 5;
                         ctx.fillRect(sway, i * 10, 3, 10);
                         if (i % 3 === 0) {
                             ctx.fillStyle = '#2D5A27';
-                            ctx.fillRect(sway - 4, i * 10 + 2, 5, 4); // Fogliolina
+                            ctx.fillRect(sway - 4, i * 10 + 2, 5, 4);
                             ctx.fillStyle = '#1A3311';
                         }
                     }
                     ctx.restore();
                 } else if (dec.type === 'crystal') {
-                    // Cristallo sfaccettato e luminoso
                     ctx.save();
                     ctx.translate(screenX, screenY);
-                    ctx.rotate(Math.sin(Date.now() / 500 + dec.x) * 0.2); // Leggera oscillazione "magica"
-
+                    ctx.rotate(Math.sin(Date.now() / 500 + dec.x) * 0.2);
                     ctx.shadowBlur = 15;
                     ctx.shadowColor = dec.color;
                     ctx.fillStyle = dec.color;
-
                     ctx.beginPath();
                     ctx.moveTo(0, 0);
                     ctx.lineTo(-8 * dec.scale, -20 * dec.scale);
@@ -1290,8 +1355,6 @@ class World {
                     ctx.lineTo(8 * dec.scale, -20 * dec.scale);
                     ctx.closePath();
                     ctx.fill();
-
-                    // Riflesso interno
                     ctx.fillStyle = '#FFF';
                     ctx.globalAlpha = 0.5;
                     ctx.beginPath();
@@ -1299,14 +1362,13 @@ class World {
                     ctx.lineTo(0, -25 * dec.scale);
                     ctx.lineTo(2 * dec.scale, -10 * dec.scale);
                     ctx.fill();
-
                     ctx.restore();
                 }
             }
         });
 
-        // Render Interactables in Primo Piano
-        this.interactables.forEach(b => {
+        // --- 4. INTERACTABLES ---
+        visibleInteractables.forEach(b => {
             let screenX = b.x - camera.x;
             let screenY = b.y - camera.y;
 
@@ -1315,21 +1377,14 @@ class World {
                     this.renderFantasyHouse(ctx, screenX, screenY, b.width, b.height, false, b.looted);
                 } else if (b.type === 'castle') {
                     this.renderCastlevania(ctx, screenX, screenY, b.width, b.height, false, b.looted);
-
-                    if (!b.looted) {
-                        ctx.fillStyle = '#800000';
-                    } else {
-                        ctx.fillStyle = '#331111';
-                    }
+                    ctx.fillStyle = b.looted ? '#331111' : '#800000';
                     ctx.fillRect(screenX + 35, screenY + 120, 25, 90);
                     ctx.fillRect(screenX + b.width - 60, screenY + 120, 25, 90);
                 } else if (b.type === 'ladder') {
-                    // Rendering Scala a Pioli in primo piano
-                    ctx.fillStyle = '#2A1810'; // Legno scuro (Montanti verticali)
+                    ctx.fillStyle = '#2A1810';
                     ctx.fillRect(screenX, screenY, 6, b.height);
                     ctx.fillRect(screenX + b.width - 6, screenY, 6, b.height);
-
-                    ctx.fillStyle = '#3E2723'; // Legno chiaro (Gradini)
+                    ctx.fillStyle = '#3E2723';
                     for (let n = 10; n < b.height - 10; n += 30) {
                         ctx.fillRect(screenX + 6, screenY + n, b.width - 12, 6);
                     }
@@ -1689,11 +1744,13 @@ class Player {
         }
 
         let shieldStatus = this.hasShield ? " | ESCUDO DIVINO: ATTIVO 🛡️✨" : "";
-        document.getElementById('healthUI').innerText = `Salute: ${this.health}${shieldStatus}`;
+        let hUI = document.getElementById('healthUI');
+        if (hUI) hUI.innerText = `Salute: ${Math.floor(this.health)}${shieldStatus}`;
 
         // Sistema d'Attacco (Differenziato per Eroe)
         if ((keys['Enter'] || keys['MouseLeft']) && !this.isAttacking) {
             if (playerStyle === 'CYBER') {
+
                 // ATTACCO A DISTANZA: Lancia Stella Ninja
                 let shurikenVx = this.direction * 1000;
                 projectiles.push(new Projectile(this.x + this.width/2, this.y + 40, shurikenVx, -100, this));
@@ -3465,13 +3522,6 @@ class Zombie {
                 this.vx = 0;
             }
 
-            // Logica Morte Alleato (Saluto)
-            if (this.isAlly && this.hp <= 0 && !this.isSaluting) {
-                this.isSaluting = true;
-                this.state = 'dead';
-                this.saluteTimer = 2.0;
-                this.vx = 0;
-            }
 
             this.visualScaleY += (1 - this.visualScaleY) * 0.1;
             this.visualScaleX += (1 - this.visualScaleX) * 0.1;
@@ -4079,7 +4129,7 @@ class Human {
         
         // Limiti X Mondo (semplice)
         if (this.x < 0) this.vx = Math.abs(this.vx);
-        if (this.x > world.width) this.vx = -Math.abs(this.vx);
+        if (this.x > world.mapWidth) this.vx = -Math.abs(this.vx);
     }
 
     draw(ctx, camera) {
@@ -4335,11 +4385,13 @@ window.buyItem = function (item) {
     }
 };
 
-const world = new World();
-const player = new Player(100, 400);
+
+
+world = new World();
+player = new Player(world.platforms && world.platforms[0] ? world.platforms[0].x + 50 : 100, 400);
 
 function update(dt) {
-    if (gameState === 'MENU') return;
+    if (!world || !player || gameState === 'MENU') return;
 
     // Se lo shop è aperto, il tempo scorre al 20% (Effetto Slow-Mo)
     if (isShopOpen) dt *= 0.2;
@@ -4511,22 +4563,7 @@ function update(dt) {
             }
         });
 
-        // Combattimento: Zombie vs Alleati
-        allies.forEach(a => {
-            if (z.state === 'chasing' && a.hp > 0 && a.isHitTimer <= 0 && z.hp > 0 && z.isHit <= 0) {
-                let dAx = Math.abs(a.x - z.x);
-                let dAy = Math.abs(a.y - z.y);
-                if (dAx < 40 && dAy < 50) {
-                    playSound('player_hit', a.x, a.y);
-                    a.hp -= 10;
-                    a.isHitTimer = 0.8;
-                    a.vy = -200;
-                    a.vx = (a.x > z.x ? 100 : -100);
-                    createDust(a.x + a.width / 2, a.y + a.height, 5);
-                }
-            }
-        });
-    }
+        }
 
     if (player.isHitTimer > 0) player.isHitTimer -= dt;
 
@@ -4804,6 +4841,7 @@ function drawDarkness(ctx) {
 }
 
 function draw() {
+    if (!world || !player) return;
     let windSpeed = 25;
     let cloudOffset = ((Date.now() / 1000) * windSpeed) % width;
 
