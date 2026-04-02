@@ -59,180 +59,66 @@ let musicManager = null;
 class MusicManager {
     constructor(ctx) {
         this.ctx = ctx;
-        this.masterGain = ctx.createGain();
-        this.masterGain.connect(ctx.destination);
-        this.masterGain.gain.setValueAtTime(0.06, ctx.currentTime); 
+        this.audio = new Audio('soundtrack.mp3');
+        this.audio.loop = true;
+        this.audio.volume = 0; // Inizia muto per il fade-in
         
         this.isPlaying = false;
-        this.nextNoteTime = 0;
-        this.tempo = 130; 
-        this.lookahead = 0.1;
-        this.scheduleInterval = 30;
-        this.beat = 0;
         this.isIntro = true;
-
-        // SCALA PENTATONICA MINORE (LA)
-        this.notes = {
-            A2: 110, C3: 130.81, D3: 146.83, E3: 164.81, G3: 196.00,
-            A3: 220, C4: 261.63, D4: 293.66, E4: 329.63, G4: 392.00, A4: 440
-        };
-
-        // --- PATTERNS (16 STEPS) ---
-        // Intro: Eroico e sincopato
-        this.introMelody = ['A3', '-', 'A3', 'E3', 'G3', '-', 'A3', '-', 'C4', '-', 'D4', 'C4', 'A3', 'G3', 'E3', '-'];
-        this.introBass   = ['A2', '-', '-', '-', 'E2', '-', '-', '-', 'G2', '-', '-', '-', 'D2', '-', '-', '-'];
         
-        // Gioco: Misterioso e costante
-        this.gameMelody  = ['A3', '-', 'C4', '-', 'D4', '-', 'E4', 'G4', 'A4', '-', 'G4', '-', 'E4', '-', 'D4', 'C4'];
-        this.gameBass    = ['A2', 'A2', 'E2', 'E2', 'G2', 'G2', 'D2', 'D2', 'A2', 'A1', 'E2', 'E1', 'G2', 'G1', 'D2', 'D1'];
+        // Caricamento leggero
+        this.audio.preload = 'auto';
     }
 
     setGameMode() {
         this.isIntro = false;
-        this.tempo = 110; 
-        this.beat = 0;
-        // Fade leggero del volume globale del gioco
-        this.masterGain.gain.exponentialRampToValueAtTime(0.04, this.ctx.currentTime + 2);
+        // Abbassa leggermente il volume durante il gioco per gli effetti sonori
+        if (this.audio) {
+            const currentVol = this.audio.volume;
+            const targetVol = 0.1; // Volume di gioco molto ridotto
+            
+            // Fade graduale al volume di gioco
+            const fadeInterval = setInterval(() => {
+                if (this.audio.volume > targetVol) {
+                    this.audio.volume = Math.max(targetVol, this.audio.volume - 0.05);
+                } else if (this.audio.volume < targetVol) {
+                    this.audio.volume = Math.min(targetVol, this.audio.volume + 0.05);
+                } else {
+                    clearInterval(fadeInterval);
+                }
+            }, 100);
+        }
     }
 
     start() {
         if (this.isPlaying) return;
         this.isPlaying = true;
-        if (this.ctx.state === 'suspended') this.ctx.resume();
-        this.nextNoteTime = this.ctx.currentTime;
-        this.scheduler();
+        
+        // Gestione errore se il file non esiste ancora
+        this.audio.play().then(() => {
+            // Fade-in iniziale
+            let vol = 0;
+            const fadeIn = setInterval(() => {
+                vol += 0.05;
+                if (vol >= 0.2) { // Volume massimo menu molto ridotto
+                    this.audio.volume = 0.2;
+                    clearInterval(fadeIn);
+                } else {
+                    this.audio.volume = vol;
+                }
+            }, 100);
+        }).catch(err => {
+            console.warn("File 'soundtrack.mp3' non trovato o errore di riproduzione:", err);
+            this.isPlaying = false;
+        });
     }
 
     stop() {
         this.isPlaying = false;
-        if (this.timeoutId) clearTimeout(this.timeoutId);
-    }
-
-    scheduler() {
-        if (!this.isPlaying) return;
-        while (this.nextNoteTime < this.ctx.currentTime + this.lookahead) {
-            this.scheduleBeat(this.beat % 16, this.nextNoteTime);
-            this.advanceBeat();
+        if (this.audio) {
+            this.audio.pause();
+            this.audio.currentTime = 0;
         }
-        this.timeoutId = setTimeout(() => this.scheduler(), this.scheduleInterval);
-    }
-
-    advanceBeat() {
-        const secondsPerBeat = 60 / this.tempo / 4; // Sedicesimi
-        this.nextNoteTime += secondsPerBeat;
-        this.beat++;
-    }
-
-    scheduleBeat(step, time) {
-        const currentMelody = this.isIntro ? this.introMelody : this.gameMelody;
-        const currentBass = this.isIntro ? this.introBass : this.gameBass;
-
-        // 1. MELODIA (Square Pulse)
-        const note = currentMelody[step];
-        if (note !== '-') {
-            const freq = this.notes[note] || this.notes['A3'];
-            this.playPulse(freq, time, 0.1, 0.04);
-        }
-
-        // 2. BASSO (Triangle)
-        const bassNote = currentBass[step];
-        if (bassNote !== '-') {
-            const freq = (this.notes[bassNote] || this.notes['A2']) * 0.5;
-            this.playBass(freq, time, 0.2, 0.12);
-        }
-
-        // 3. BATTERIA (Intro Only or Game Subtle)
-        if (this.isIntro || step % 4 === 0) {
-            if (step % 8 === 0) this.playKick(time);
-            if (step % 8 === 4) this.playSnare(time);
-        }
-        // Hi-Hat costante
-        if (step % 2 === 0) this.playHiHat(time);
-    }
-
-    // --- SINTESI STRUMENTI ---
-
-    playPulse(freq, time, duration, volume) {
-        const osc = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
-        osc.type = 'square';
-        osc.frequency.setValueAtTime(freq, time);
-        // Effetto "Vibrato" Arcade veloce
-        osc.frequency.exponentialRampToValueAtTime(freq * 1.01, time + duration * 0.5);
-        
-        gain.gain.setValueAtTime(0, time);
-        gain.gain.linearRampToValueAtTime(volume, time + 0.01);
-        gain.gain.exponentialRampToValueAtTime(0.001, time + duration);
-        
-        osc.connect(gain);
-        gain.connect(this.masterGain);
-        osc.start(time);
-        osc.stop(time + duration);
-    }
-
-    playBass(freq, time, duration, volume) {
-        const osc = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
-        osc.type = 'triangle';
-        osc.frequency.setValueAtTime(freq, time);
-        
-        gain.gain.setValueAtTime(0, time);
-        gain.gain.linearRampToValueAtTime(volume, time + 0.02);
-        gain.gain.exponentialRampToValueAtTime(0.001, time + duration);
-        
-        osc.connect(gain);
-        gain.connect(this.masterGain);
-        osc.start(time);
-        osc.stop(time + duration);
-    }
-
-    playKick(time) {
-        const osc = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
-        osc.frequency.setValueAtTime(150, time);
-        osc.frequency.exponentialRampToValueAtTime(40, time + 0.1);
-        gain.gain.setValueAtTime(0.3, time);
-        gain.gain.exponentialRampToValueAtTime(0.001, time + 0.15);
-        osc.connect(gain);
-        gain.connect(this.masterGain);
-        osc.start(time);
-        osc.stop(time + 0.15);
-    }
-
-    playSnare(time) {
-        const bufferSize = this.ctx.sampleRate * 0.1;
-        const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
-        const data = buffer.getChannelData(0);
-        for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
-        
-        const noise = this.ctx.createBufferSource();
-        noise.buffer = buffer;
-        const filter = this.ctx.createBiquadFilter();
-        filter.type = 'highpass';
-        filter.frequency.setValueAtTime(1000, time);
-        
-        const gain = this.ctx.createGain();
-        gain.gain.setValueAtTime(0.15, time);
-        gain.gain.exponentialRampToValueAtTime(0.001, time + 0.1);
-        
-        noise.connect(filter);
-        filter.connect(gain);
-        gain.connect(this.masterGain);
-        noise.start(time);
-        noise.stop(time + 0.1);
-    }
-
-    playHiHat(time) {
-        const osc = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
-        osc.type = 'square';
-        osc.frequency.setValueAtTime(10000, time);
-        gain.gain.setValueAtTime(0.03, time);
-        gain.gain.exponentialRampToValueAtTime(0.001, time + 0.02);
-        osc.connect(gain);
-        gain.connect(this.masterGain);
-        osc.start(time);
-        osc.stop(time + 0.02);
     }
 }
 
@@ -2860,16 +2746,17 @@ class HeroAlly {
         if (!this.isClimbing) {
             this.isGrounded = false;
             world.platforms.forEach(p => {
-                // --- OTTIMIZZAZIONE COLLISIONE: FILTRO PROSSIMITÀ ---
-                if (Math.abs(p.x - this.x) > 700) return; 
+                // --- FIX COLLISIONE: CONTROLLO BOUNDING BOX PROPRIO ---
+                // Verifica se l'alleato è allineato orizzontalmente con la piattaforma (inclusa la sua larghezza)
+                if (this.x + this.width < p.x - 5 || this.x > p.x + p.width + 5) return;
                 
                 if (p.isOneWay && this.vy < 0) return;
-                if (this.x + this.width > p.x && this.x < p.x + p.width) {
-                    if (this.y + this.height > p.y && this.y + this.height < p.y + p.height + this.vy * dt + 10 && this.vy >= 0) {
-                        this.y = p.y - this.height;
-                        this.vy = 0;
-                        this.isGrounded = true;
-                    }
+                
+                // Atterraggio (Logica allineata a quella del Player per massima stabilità)
+                if (this.vy >= 0 && this.y + this.height >= p.y && this.y + this.height <= p.y + 20 + this.vy * dt) {
+                    this.y = p.y - this.height;
+                    this.vy = 0;
+                    this.isGrounded = true;
                 }
             });
         }
@@ -3395,13 +3282,13 @@ class Zombie {
                         let obstacleAhead = false;
 
                         world.platforms.forEach(p => {
-                            if (Math.abs(p.x - this.x) > 200) return;
+                            // --- FIX AI: Rilevamento piano/ostacoli corretto ---
+                            if (this.x + this.width < p.x - 200 || this.x > p.x + p.width + 200) return;
+                            
                             if (lookAheadX >= p.x && lookAheadX <= p.x + p.width) {
                                 if (p.y >= this.y + this.height - 30 && p.y <= this.y + this.height + 150) {
                                     hasFloor = true;
                                 }
-                            }
-                            if (lookAheadX >= p.x && lookAheadX <= p.x + p.width) {
                                 if (p.y < this.y + this.height - 10 && p.y > this.y - 50) {
                                     obstacleAhead = true;
                                 }
@@ -3525,7 +3412,8 @@ class Zombie {
         // 1. FISICA ORIZZONTALE & COLLISIONE (Ottimizzata)
         this.x += this.vx * dt;
         world.platforms.forEach(p => {
-            if (Math.abs(p.x - this.x) > 800) return;
+            // --- FIX COLLISIONE ORIZZONTALE ZOMBIE ---
+            if (this.x + this.width < p.x - 50 || this.x > p.x + p.width + 50) return;
 
             // "Piattaforme Unidirezionali" (One-Way) per Zombie
             let isOneWay = p.height <= 30 || p.isStairs || p.isBridge;
@@ -3551,7 +3439,8 @@ class Zombie {
         if (this.state !== 'digging' && this.state !== 'dead') {
             this.isGrounded = false;
             world.platforms.forEach(p => {
-                if (Math.abs(p.x - this.x) > 800) return;
+                // --- FIX COLLISIONE VERTICALE ZOMBIE ---
+                if (this.x + this.width < p.x - 5 || this.x > p.x + p.width + 5) return;
 
                 if (this.x < p.x + p.width - 5 && this.x + this.width > p.x + 5) {
                     if (this.vy >= 0 && this.y + this.height >= p.y && this.y + this.height <= p.y + 20 + this.vy * dt) {
