@@ -4118,17 +4118,26 @@ function drawBossUI(ctx, boss) {
     const barW = 600;
     const barH = 20;
     const x = (canvas.width - barW) / 2;
-    const y = 170; // Spostato sotto l'inventario (era 80)
+    const y = 170; 
 
-    // Sfondo e Ombra
-    ctx.fillStyle = 'rgba(0,0,0,0.7)';
-    ctx.fillRect(x - 5, y - 10, barW + 10, barH + 50);
+    // 1. SFONDO UI (Pannello Oscuro)
+    ctx.save();
+    ctx.fillStyle = 'rgba(10, 0, 0, 0.85)';
+    ctx.shadowBlur = 25;
+    ctx.shadowColor = '#000000';
+    ctx.fillRect(x - 30, y - 15, barW + 60, barH + 95);
+    ctx.restore();
     
-    // Nome Boss
-    ctx.fillStyle = '#FF3333';
-    ctx.font = 'bold 24px Consolas';
+    // 2. NOME BOSS (Stylized & Extra Large)
+    ctx.save();
+    ctx.fillStyle = '#FF0000';
+    ctx.font = '72px Creepster'; 
     ctx.textAlign = 'center';
-    ctx.fillText("OMEGA ZOMBIE - IL DIVORATORE", canvas.width / 2, y + 55);
+    ctx.shadowColor = '#FF0000';
+    let pulse = 12 + Math.sin(Date.now() / 150) * 10;
+    ctx.shadowBlur = pulse;
+    ctx.fillText("OMEGA ZOMBIE - IL DIVORATORE", canvas.width / 2, y + 90);
+    ctx.restore();
 
     // Barra Vita
     ctx.fillStyle = '#441111';
