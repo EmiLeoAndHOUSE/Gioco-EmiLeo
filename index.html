@@ -14,6 +14,60 @@
             image-rendering: pixelated;
         }
 
+        /* --- BUFF TIMER UI (OVERCLOCK / LEGENDARY) --- */
+        #buffBarUI {
+            position: absolute;
+            top: 62px;
+            left: 20px;
+            display: none; /* mostrato via JS quando attivo */
+            align-items: center;
+            gap: 8px;
+            z-index: 200;
+            background: linear-gradient(90deg, rgba(0,0,0,0.75) 0%, rgba(0,30,40,0.85) 100%);
+            padding: 5px 12px 5px 8px;
+            border-radius: 8px;
+            border: 1px solid rgba(0,229,255,0.5);
+            box-shadow: 0 0 12px rgba(0,229,255,0.3), inset 0 1px 0 rgba(255,255,255,0.05);
+            pointer-events: none;
+        }
+        #buffIcon {
+            font-size: 18px;
+            line-height: 1;
+        }
+        #buffName {
+            font-family: 'Consolas', monospace;
+            font-size: 11px;
+            font-weight: bold;
+            color: #00FFFF;
+            letter-spacing: 1.5px;
+            text-shadow: 0 0 8px rgba(0,229,255,0.8);
+            white-space: nowrap;
+        }
+        #buffBarTrack {
+            width: 110px;
+            height: 6px;
+            background: rgba(255,255,255,0.08);
+            border-radius: 4px;
+            overflow: hidden;
+            border: 1px solid rgba(0,229,255,0.2);
+        }
+        #buffBarFill {
+            height: 100%;
+            width: 100%;
+            background: linear-gradient(90deg, #0099FF, #00FFFF);
+            border-radius: 4px;
+            transition: width 0.25s linear;
+            box-shadow: 0 0 6px #00FFFF;
+        }
+        #buffTimerLabel {
+            font-family: 'Consolas', monospace;
+            font-size: 10px;
+            font-weight: bold;
+            color: rgba(0,229,255,0.8);
+            min-width: 22px;
+            text-align: right;
+        }
+
         /* --- STILI MAIN MENU (ARCADE) --- */
         #mainMenu {
             position: absolute;
@@ -219,57 +273,159 @@
             font-style: italic;
         }
 
-        /* --- STILI INVENTARIO FRAMMENTI --- */
+        /* --- STILI INVENTARIO CRISTALLI OMEGA --- */
         #inventoryUI {
             position: absolute;
-            bottom: 20px;
-            left: 20px;
+            top: 70px;
+            left: 50%;
+            transform: translateX(-50%);
             display: flex;
-            gap: 15px;
+            flex-direction: row;
+            align-items: center;
+            gap: 0;
             z-index: 150;
-            background: rgba(0,0,0,0.4);
-            padding: 10px;
+            background: linear-gradient(135deg, rgba(20,8,35,0.92) 0%, rgba(10,4,20,0.96) 100%);
+            padding: 0;
             border-radius: 12px;
-            border: 1px solid rgba(255,255,255,0.1);
-            backdrop-filter: blur(5px);
+            border: 1.5px solid rgba(142,68,173,0.55);
+            box-shadow:
+                0 0 0 1px rgba(0,229,255,0.08),
+                0 0 20px rgba(142,68,173,0.3),
+                0 0 45px rgba(142,68,173,0.1),
+                inset 0 1px 0 rgba(255,255,255,0.06);
+            backdrop-filter: blur(12px);
+            overflow: hidden;
+            pointer-events: none;
+        }
+
+        /* Linea luminosa in cima */
+        #inventoryUI::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 1.5px;
+            background: linear-gradient(90deg, transparent, #8E44AD, #00E5FF, #8E44AD, transparent);
+            opacity: 0.85;
+        }
+        #inventoryUI::after {
+            content: '';
+            position: absolute;
+            bottom: 0; left: 0; right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(142,68,173,0.5), transparent);
+        }
+
+        /* Etichetta titolo verticale a sinistra */
+        #inventoryTitle {
+            writing-mode: initial;
+            font-family: 'Consolas', monospace;
+            font-size: 9px;
+            font-weight: bold;
+            letter-spacing: 2px;
+            color: #C39BD3;
+            text-transform: uppercase;
+            padding: 0 10px 0 14px;
+            text-shadow: 0 0 8px rgba(142,68,173,0.9), 0 0 16px rgba(0,229,255,0.3);
+            white-space: nowrap;
+            border-right: 1px solid rgba(142,68,173,0.25);
+            background: rgba(142,68,173,0.07);
+            display: flex;
+            align-items: center;
+            align-self: stretch;
+        }
+
+        /* Wrapper slot orizzontale */
+        #inventorySlots {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 10px;
         }
 
         .inventory-slot {
-            width: 50px;
-            height: 50px;
-            background: rgba(255,255,255,0.05);
-            border: 2px solid #444;
-            border-radius: 8px;
+            width: 54px;
+            height: 54px;
+            background: rgba(142,68,173,0.06);
+            border: 1.5px solid rgba(80,40,100,0.65);
+            border-radius: 9px;
             display: flex;
             justify-content: center;
             align-items: center;
             position: relative;
-            transition: all 0.3s;
+            transition: all 0.4s cubic-bezier(0.4,0,0.2,1);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+        }
+
+        /* Numero slot (numeri romani) */
+        .inventory-slot::after {
+            content: attr(data-num);
+            position: absolute;
+            bottom: 2px;
+            right: 4px;
+            font-family: 'Consolas', monospace;
+            font-size: 7px;
+            color: rgba(142,68,173,0.45);
+            font-weight: bold;
+            line-height: 1;
+            transition: color 0.4s;
         }
 
         .inventory-slot.active {
-            border-color: #00ffcc;
-            box-shadow: 0 0 15px rgba(0,255,204,0.4);
-            background: rgba(0,255,204,0.1);
+            border-color: rgba(142,68,173,0.9);
+            box-shadow:
+                0 0 14px rgba(142,68,173,0.6),
+                0 0 28px rgba(0,229,255,0.18),
+                inset 0 0 12px rgba(142,68,173,0.14);
+            background: rgba(142,68,173,0.14);
+        }
+        .inventory-slot.active::after {
+            color: rgba(0,229,255,0.7);
+        }
+
+        /* Separatore + contatore a destra degli slot */
+        #inventoryProgress {
+            font-family: 'Consolas', monospace;
+            font-size: 11px;
+            font-weight: bold;
+            color: rgba(195,155,211,0.65);
+            letter-spacing: 1px;
+            padding: 0 14px 0 10px;
+            border-left: 1px solid rgba(142,68,173,0.22);
+            white-space: nowrap;
+            display: flex;
+            align-items: center;
+            align-self: stretch;
+            background: rgba(142,68,173,0.04);
         }
 
         .shard-icon {
-            width: 32px;
-            height: 32px;
-            filter: drop-shadow(0 0 5px rgba(0,255,204,0.8));
-            animation: floatShard 2s infinite ease-in-out;
+            width: 46px;
+            height: 46px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            filter: drop-shadow(0 0 3px rgba(142,68,173,0.4));
+            animation: floatShard 2.2s infinite ease-in-out;
             opacity: 0;
-            transition: opacity 0.5s;
+            transition: opacity 0.6s;
         }
 
         .inventory-slot.active .shard-icon {
             opacity: 1;
+            animation: floatShard 2.2s infinite ease-in-out, gemPulse 1.8s infinite alternate;
+        }
+
+        @keyframes gemPulse {
+            0%   { filter: drop-shadow(0 0 6px rgba(142,68,173,0.9))  drop-shadow(0 0 12px rgba(0,229,255,0.5)); }
+            100% { filter: drop-shadow(0 0 16px rgba(142,68,173,1.0)) drop-shadow(0 0 26px rgba(0,229,255,1.0)); }
         }
 
         @keyframes floatShard {
-            0%, 100% { transform: translateY(0); }
-            50% { transform: translateY(-5px); }
+            0%, 100% { transform: translateY(0px) scale(1); }
+            50%       { transform: translateY(-3px) scale(1.04); }
         }
+
 
         /* --- STILI VITTORIA FINALE --- */
         #victoryScreen {
@@ -579,7 +735,15 @@
     </div>
 
     <canvas id="gameCanvas"></canvas>
-    
+
+    <!-- BUFF TIMER UI (OVERCLOCK / LEGENDARY) -->
+    <div id="buffBarUI">
+        <span id="buffIcon">⚡</span>
+        <span id="buffName">OVERCLOCK</span>
+        <div id="buffBarTrack"><div id="buffBarFill"></div></div>
+        <span id="buffTimerLabel">25s</span>
+    </div>
+
     <div id="ui">
         <div class="stats">
             <span id="healthUI">Salute: 100</span> | 
@@ -593,12 +757,16 @@
         <div id="miniLeaderboardList"></div>
     </div>
 
-    <!-- INVENTARIO FRAMMENTI -->
+    <!-- INVENTARIO CRISTALLI OMEGA -->
     <div id="inventoryUI">
-        <div class="inventory-slot" id="slot-0"><div class="shard-icon">💎</div></div>
-        <div class="inventory-slot" id="slot-1"><div class="shard-icon">💎</div></div>
-        <div class="inventory-slot" id="slot-2"><div class="shard-icon">💎</div></div>
-        <div class="inventory-slot" id="slot-3"><div class="shard-icon">💎</div></div>
+        <div id="inventoryTitle">✦ CRISTALLI OMEGA ✦</div>
+        <div id="inventorySlots">
+            <div class="inventory-slot" id="slot-0" data-num="I"><div class="shard-icon"><svg viewBox="-22 -26 44 52" xmlns="http://www.w3.org/2000/svg" width="50" height="50"><defs><radialGradient id="gc" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#ffffff"/><stop offset="60%" stop-color="#00E5FF"/><stop offset="100%" stop-color="rgba(0,229,255,0)"/></radialGradient></defs><polygon points="0,-22 12,-8 0,0" fill="#9B59B6"/><polygon points="0,-22 -12,-8 0,0" fill="#8E44AD"/><polygon points="12,-8 16,8 0,0" fill="#5B2C6F"/><polygon points="-12,-8 -16,8 0,0" fill="#D2B4DE"/><polygon points="16,8 0,22 0,0" fill="#8E44AD"/><polygon points="-16,8 0,22 0,0" fill="#9B59B6"/><line x1="0" y1="-22" x2="12" y2="-8" stroke="rgba(255,255,255,0.4)" stroke-width="1.2"/><line x1="0" y1="-22" x2="-12" y2="-8" stroke="rgba(255,255,255,0.28)" stroke-width="0.8"/><line x1="-16" y1="8" x2="16" y2="8" stroke="rgba(255,255,255,0.12)" stroke-width="0.6"/><circle cx="0" cy="0" r="7" fill="url(#gc)"/></svg></div></div>
+            <div class="inventory-slot" id="slot-1" data-num="II"><div class="shard-icon"><svg viewBox="-22 -26 44 52" xmlns="http://www.w3.org/2000/svg" width="50" height="50"><defs><radialGradient id="gc1" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#ffffff"/><stop offset="60%" stop-color="#00E5FF"/><stop offset="100%" stop-color="rgba(0,229,255,0)"/></radialGradient></defs><polygon points="0,-22 12,-8 0,0" fill="#9B59B6"/><polygon points="0,-22 -12,-8 0,0" fill="#8E44AD"/><polygon points="12,-8 16,8 0,0" fill="#5B2C6F"/><polygon points="-12,-8 -16,8 0,0" fill="#D2B4DE"/><polygon points="16,8 0,22 0,0" fill="#8E44AD"/><polygon points="-16,8 0,22 0,0" fill="#9B59B6"/><line x1="0" y1="-22" x2="12" y2="-8" stroke="rgba(255,255,255,0.4)" stroke-width="1.2"/><line x1="0" y1="-22" x2="-12" y2="-8" stroke="rgba(255,255,255,0.28)" stroke-width="0.8"/><line x1="-16" y1="8" x2="16" y2="8" stroke="rgba(255,255,255,0.12)" stroke-width="0.6"/><circle cx="0" cy="0" r="7" fill="url(#gc1)"/></svg></div></div>
+            <div class="inventory-slot" id="slot-2" data-num="III"><div class="shard-icon"><svg viewBox="-22 -26 44 52" xmlns="http://www.w3.org/2000/svg" width="50" height="50"><defs><radialGradient id="gc2" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#ffffff"/><stop offset="60%" stop-color="#00E5FF"/><stop offset="100%" stop-color="rgba(0,229,255,0)"/></radialGradient></defs><polygon points="0,-22 12,-8 0,0" fill="#9B59B6"/><polygon points="0,-22 -12,-8 0,0" fill="#8E44AD"/><polygon points="12,-8 16,8 0,0" fill="#5B2C6F"/><polygon points="-12,-8 -16,8 0,0" fill="#D2B4DE"/><polygon points="16,8 0,22 0,0" fill="#8E44AD"/><polygon points="-16,8 0,22 0,0" fill="#9B59B6"/><line x1="0" y1="-22" x2="12" y2="-8" stroke="rgba(255,255,255,0.4)" stroke-width="1.2"/><line x1="0" y1="-22" x2="-12" y2="-8" stroke="rgba(255,255,255,0.28)" stroke-width="0.8"/><line x1="-16" y1="8" x2="16" y2="8" stroke="rgba(255,255,255,0.12)" stroke-width="0.6"/><circle cx="0" cy="0" r="7" fill="url(#gc2)"/></svg></div></div>
+            <div class="inventory-slot" id="slot-3" data-num="IV"><div class="shard-icon"><svg viewBox="-22 -26 44 52" xmlns="http://www.w3.org/2000/svg" width="50" height="50"><defs><radialGradient id="gc3" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#ffffff"/><stop offset="60%" stop-color="#00E5FF"/><stop offset="100%" stop-color="rgba(0,229,255,0)"/></radialGradient></defs><polygon points="0,-22 12,-8 0,0" fill="#9B59B6"/><polygon points="0,-22 -12,-8 0,0" fill="#8E44AD"/><polygon points="12,-8 16,8 0,0" fill="#5B2C6F"/><polygon points="-12,-8 -16,8 0,0" fill="#D2B4DE"/><polygon points="16,8 0,22 0,0" fill="#8E44AD"/><polygon points="-16,8 0,22 0,0" fill="#9B59B6"/><line x1="0" y1="-22" x2="12" y2="-8" stroke="rgba(255,255,255,0.4)" stroke-width="1.2"/><line x1="0" y1="-22" x2="-12" y2="-8" stroke="rgba(255,255,255,0.28)" stroke-width="0.8"/><line x1="-16" y1="8" x2="16" y2="8" stroke="rgba(255,255,255,0.12)" stroke-width="0.6"/><circle cx="0" cy="0" r="7" fill="url(#gc3)"/></svg></div></div>
+        </div>
+        <div id="inventoryProgress">0 / 4</div>
     </div>
 
     <!-- VITTORIA FINALE -->

@@ -542,17 +542,20 @@ class Projectile {
         this.x += this.vx * dt;
         this.y += this.vy * dt;
         this.life -= dt;
-        this.rotation += 15 * dt;
+        this.rotation += this.overclock ? 25 * dt : 15 * dt;
 
         // Collisione con Nemici
         for (let e of enemies) {
             if (e.hp > 0 && Math.abs(e.x - this.x) < 40 && Math.abs(e.y - this.y) < 60) {
-                e.hp -= 0.9; // Ridotto ulteriormente del 15% (da 1.1 a 0.9)
+                const dmg = this.overclock ? 1.8 : 0.9; // Danno raddoppiato con OVERCLOCK
+                e.hp -= dmg;
                 e.isHit = 0.2;
-                e.vx += this.vx * 0.2;
+                e.vx += this.vx * (this.overclock ? 0.35 : 0.2); // Più knockback
                 playSound('zombie_hit', e.x, e.y);
-                createSparks(this.x, this.y);
-                this.life = 0; // Distrutto all'impatto
+                // Scintille più intense sotto OVERCLOCK
+                createSparks(this.x, this.y, this.overclock ? '#00FFFF' : undefined);
+                if (this.overclock) createSparks(this.x, this.y, '#FFFFFF');
+                this.life = 0;
                 return;
             }
         }
@@ -565,21 +568,40 @@ class Projectile {
         ctx.save();
         ctx.translate(sx, sy);
         ctx.rotate(this.rotation);
-        
-        ctx.shadowBlur = 10;
-        ctx.shadowColor = '#00FFFF';
-        ctx.fillStyle = '#FFF';
 
-        // Disegno Stella Ninja (Croce Cross)
-        ctx.beginPath();
-        for (let i = 0; i < 4; i++) {
-            ctx.rotate(Math.PI / 2);
-            ctx.moveTo(0, 0);
-            ctx.lineTo(10, 0);
-            ctx.lineTo(0, 15);
-            ctx.lineTo(-10, 0);
+        if (this.overclock) {
+            // Shuriken OVERCLOCK: più grande, cyan brillante con glow intenso
+            ctx.shadowBlur = 20;
+            ctx.shadowColor = '#00FFFF';
+            ctx.fillStyle = '#00FFFF';
+            ctx.beginPath();
+            for (let i = 0; i < 4; i++) {
+                ctx.rotate(Math.PI / 2);
+                ctx.moveTo(0, 0);
+                ctx.lineTo(13, 0);
+                ctx.lineTo(0, 19);
+                ctx.lineTo(-13, 0);
+            }
+            ctx.fill();
+            // Nucleo bianco
+            ctx.fillStyle = '#FFFFFF';
+            ctx.beginPath();
+            ctx.arc(0, 0, 4, 0, Math.PI * 2);
+            ctx.fill();
+        } else {
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = '#00FFFF';
+            ctx.fillStyle = '#FFF';
+            ctx.beginPath();
+            for (let i = 0; i < 4; i++) {
+                ctx.rotate(Math.PI / 2);
+                ctx.moveTo(0, 0);
+                ctx.lineTo(10, 0);
+                ctx.lineTo(0, 15);
+                ctx.lineTo(-10, 0);
+            }
+            ctx.fill();
         }
-        ctx.fill();
         ctx.restore();
     }
 }
@@ -1465,21 +1487,41 @@ class Player {
             this.buffTimer -= dt;
             if (this.buffTimer <= 0) {
                 this.buffType = null;
+                // Ripristina velocità base
+                if (playerStyle === 'CYBER') this.speed = 620;
                 showStyleTip("BONUS LEGENDARIO ESAURITO! ⏳");
             }
 
-            // Effetti visivi continui
+            // Effetti continui OVERCLOCK
             if (this.buffType === 'OVERCLOCK') {
-                createSparks(this.x + Math.random() * this.width, this.y + Math.random() * this.height, '#00FFFF');
-                this.attackDuration = 0.1; // Cyber Velocissimo
+                this.attackDuration = 0.1; // Attacco fulmineo
+                this.speed = 990;          // +60% velocità (620 → 990)
+                // Scintille cyan a profusione
+                if (Math.random() > 0.5) createSparks(this.x + Math.random() * this.width, this.y + Math.random() * this.height, '#00FFFF');
             } else if (this.buffType === 'LIFESTEAL') {
                 createDust(this.x + this.width/2, this.y + this.height/2, 1, '#FF0000');
             }
+
+            // Aggiorna la UI del buff timer
+            const buffBarFill = document.getElementById('buffBarFill');
+            const buffTimerLabel = document.getElementById('buffTimerLabel');
+            if (buffBarFill) {
+                const maxDuration = 12;
+                const pct = Math.max(0, (this.buffTimer / maxDuration) * 100);
+                buffBarFill.style.width = pct + '%';
+            }
+            if (buffTimerLabel) {
+                buffTimerLabel.textContent = Math.ceil(this.buffTimer) + 's';
+            }
+            document.getElementById('buffBarUI') && (document.getElementById('buffBarUI').style.display = 'flex');
         } else {
             // Ripristino cooldown base
-            if (playerStyle === 'CYBER') this.attackDuration = 0.2;
+            if (playerStyle === 'CYBER') { this.attackDuration = 0.2; this.speed = 620; }
             else if (playerStyle === 'PALADIN') this.attackDuration = 0.8;
             else this.attackDuration = 0.4;
+            // Nasconde la UI quando il buff finisce
+            const bUI = document.getElementById('buffBarUI');
+            if (bUI) bUI.style.display = 'none';
         }
 
         // --- OTTIMIZZAZIONE SPAZIALE: FILTRO DI PROSSIMITÀ (Culling) ---
@@ -1707,14 +1749,16 @@ class Player {
         // Sistema d'Attacco (Differenziato per Eroe)
         if ((keys['Enter'] || keys['MouseLeft']) && !this.isAttacking) {
             if (playerStyle === 'CYBER') {
-
                 // ATTACCO A DISTANZA: Lancia Stella Ninja
-                let shurikenVx = this.direction * 1000;
-                projectiles.push(new Projectile(this.x + this.width/2, this.y + 40, shurikenVx, -100, this));
+                const isOverclock = this.buffType === 'OVERCLOCK';
+                let shurikenVx = this.direction * (isOverclock ? 1500 : 1000); // +50% velocità proiettile
+                let proj = new Projectile(this.x + this.width/2, this.y + 40, shurikenVx, -100, this);
+                if (isOverclock) proj.overclock = true; // Flag per danno aumentato
+                projectiles.push(proj);
                 playSound('slash');
-                
+
                 this.isAttacking = true;
-                this.attackTimer = 0.2; // Cooldown rapido per shurikens
+                this.attackTimer = isOverclock ? 0.08 : 0.2; // Cooldown dimezzato sotto OVERCLOCK
             } else {
                 // ATTACCO CLASSICO: Spada
                 playSound('slash');
@@ -2004,8 +2048,70 @@ class Player {
         // --- ESECUZIONE DISEGNO ---
         // --- RENDERING AUREE LEGENDARY ---
         if (this.buffType === 'OVERCLOCK') {
-            // Scia elettrica azzurra costante
-            if (Math.random() > 0.7) createSparks(this.x + Math.random()*40, this.y + Math.random()*80, '#00FFFF');
+            // === AURA ELETTRICA OVERCLOCK PREMIUM ===
+            ctx.save();
+            const now = Date.now();
+
+            // 1. ALONE ESTERNO PULSANTE
+            const pulse = 0.5 + Math.sin(now / 120) * 0.5;
+            ctx.shadowBlur = 30 + pulse * 20;
+            ctx.shadowColor = '#00FFFF';
+            ctx.globalAlpha = 0.18 + pulse * 0.12;
+            drawBodyParts(true, '#00FFFF');
+            ctx.globalAlpha = 1;
+            ctx.shadowBlur = 0;
+
+            // 2. ANELLO ESTERNO ROTANTE (frammentato)
+            ctx.save();
+            ctx.rotate((now / 300) % (Math.PI * 2));
+            ctx.strokeStyle = '#00FFFF';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([10, 8]);
+            ctx.shadowBlur = 14;
+            ctx.shadowColor = '#00FFFF';
+            ctx.beginPath();
+            ctx.arc(0, 0, 48 * sizeMult, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.restore();
+
+            // 3. ANELLO INTERNO (rotazione opposta)
+            ctx.save();
+            ctx.rotate(-(now / 180) % (Math.PI * 2));
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([5, 14]);
+            ctx.shadowBlur = 8;
+            ctx.shadowColor = '#00FFFF';
+            ctx.beginPath();
+            ctx.arc(0, 0, 32 * sizeMult, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.restore();
+
+            // 4. FULMINI ANGOLARI (4 punte elettriche)
+            ctx.save();
+            ctx.strokeStyle = '#00FFFF';
+            ctx.lineWidth = 2;
+            ctx.shadowBlur = 12;
+            ctx.shadowColor = '#00FFFF';
+            ctx.globalAlpha = 0.7 + Math.sin(now / 80) * 0.3;
+            for (let i = 0; i < 4; i++) {
+                ctx.save();
+                ctx.rotate(i * Math.PI / 2 + (now / 600) % (Math.PI * 2));
+                ctx.beginPath();
+                const r = 50 * sizeMult;
+                ctx.moveTo(0, -r + 10);
+                ctx.lineTo(4,  -r + 4);
+                ctx.lineTo(-3, -r - 4);
+                ctx.lineTo(0,  -r - 10);
+                ctx.stroke();
+                ctx.restore();
+            }
+            ctx.restore();
+
+            // 5. SCINTILLE CYAN continue
+            if (Math.random() > 0.45) createSparks(this.x + Math.random() * this.width, this.y + Math.random() * this.height, '#00FFFF');
+
+            ctx.restore();
         } else if (this.buffType === 'LIFESTEAL') {
             // Fumo demoniaco rosso
             ctx.save();
@@ -4012,11 +4118,11 @@ function drawBossUI(ctx, boss) {
     const barW = 600;
     const barH = 20;
     const x = (canvas.width - barW) / 2;
-    const y = 80;
+    const y = 170; // Spostato sotto l'inventario (era 80)
 
     // Sfondo e Ombra
     ctx.fillStyle = 'rgba(0,0,0,0.7)';
-    ctx.fillRect(x - 5, y - 5, barW + 10, barH + 40);
+    ctx.fillRect(x - 5, y - 10, barW + 10, barH + 50);
     
     // Nome Boss
     ctx.fillStyle = '#FF3333';
@@ -4276,6 +4382,10 @@ function collectShard() {
     // Attiva lo slot nell'UI
     let slot = document.getElementById(`slot-${playerFragments - 1}`);
     if (slot) slot.classList.add('active');
+
+    // Aggiorna il contatore progresso
+    let prog = document.getElementById('inventoryProgress');
+    if (prog) prog.textContent = `${playerFragments} / 4`;
 
     if (playerFragments >= 4) {
         // TRIGGER MAGIA FINALE AUTOMATICO
@@ -4583,7 +4693,7 @@ function update(dt) {
                         colors = ['#FFD700', '#FFFACD', '#F0E68C'];
                     }
                     
-                    player.buffTimer = 25; // Durata 25 secondi
+                    player.buffTimer = 12; // Durata 12 secondi (dimezzata)
                     showStyleTip(`LEGGENDARIO: ${buffName}`);
                     playSound('castle_loot', player.x, player.y);
                     
