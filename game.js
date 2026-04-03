@@ -324,6 +324,11 @@ function selectHero(style) {
 
     setTimeout(() => {
         charSelect.style.display = 'none';
+        
+        // --- MOSTRA INVENTARIO OMEGA SOLO IN-GAME ---
+        const inv = document.getElementById('inventoryUI');
+        if (inv) inv.style.display = 'flex';
+        
         gameState = 'PLAY';
         showStyleTip(`PARTIAMO CON: ${style}! ⚔️`);
         
@@ -2367,13 +2372,25 @@ class HeroAlly {
         // --- AUTONOMIA E LIBERTÀ (V3) ---
         this.wanderTargetX = x;
         this.wanderTimer = 0;
-        this.leashRange = 650; // Massima distanza prima di tornare forzatamente dall'eroe
+        this.leashRange = 650;
     }
 
     update(dt, world, player, enemies, allies) {
-        // --- OTTIMIZZAZIONE SPAZIALE: FILTRO DI PROSSIMITÀ (Culling) ---
-        const scanRange = 1300;
-        const localPlatforms = world.platforms.filter(p => Math.abs(p.x - this.x) < scanRange);
+        // --- OTTIMIZZAZIONE SPAZIALE: GRID-BASED CULLING ---
+        let startIdx = Math.floor((this.x - 1200) / world.gridSize);
+        let endIdx = Math.floor((this.x + 1200) / world.gridSize);
+        let localPlatforms = [];
+        let localInteractables = [];
+        let seenPlats = new Set();
+        let seenInters = new Set();
+
+        for (let i = startIdx; i <= endIdx; i++) {
+            let cell = world.grid[i];
+            if (cell) {
+                cell.platforms.forEach(p => { if (!seenPlats.has(p)) { seenPlats.add(p); localPlatforms.push(p); } });
+                cell.interactables.forEach(it => { if (!seenInters.has(it)) { seenInters.add(it); localInteractables.push(it); } });
+            }
+        }
 
         if (this.isSaluting) {
             this.saluteTimer -= dt;
@@ -2401,120 +2418,95 @@ class HeroAlly {
         // --- TELETRASPORTO DI EMERGENZA (SE LONTANO O CAMBIO LIVELLO) ---
         const dxFromPlayer = player.x - this.x;
         const dyFromPlayer = player.y - this.y;
-        const distToPlayer = Math.sqrt(dxFromPlayer * dxFromPlayer + dyFromPlayer * dyFromPlayer);
+        const distToPlayerSq = dxFromPlayer * dxFromPlayer + dyFromPlayer * dyFromPlayer;
         
-        // Soglia verticale più sensibile (500px) per cambi di piano rapidi (Cava/Superficie)
-        if (distToPlayer > 950 || Math.abs(dyFromPlayer) > 500) {
-            // Feedback visivo
+        if (distToPlayerSq > 902500 || Math.abs(dyFromPlayer) > 500) { // 950^2
             createDust(this.x + this.width / 2, this.y + this.height / 2, 8);
-            
-            // Teletrasporto: Cerca di apparire SOPRA il giocatore per evitare di incastrarsi nel terreno e stabilizzarsi
             this.x = player.x + (Math.random() * 120 - 60);
-            this.y = player.y - 120; // Teletrasporto in volo sicuro (più alto)
+            this.y = player.y - 120; 
             this.vx = 0;
             this.vy = 0;
             this.isClimbing = false;
             this.ladderCooldown = 1.0; 
-            this.isHitTimer = 0.8; // Protezione estesa post-teletrasporto
-
-            // --- FIX FONDAMENTALE: RESET MEMORIA E STATO ---
-            // Dimentica nemici lontani nel vecchio livello per evitare di rituffarsi subito giù/su
+            this.isHitTimer = 0.8; 
             this.state = 'follow';
             this.target = null;
-
             createDust(this.x + this.width / 2, this.y + this.height / 2, 12);
             playSound('wake', this.x, this.y);
-            return; // Interrompe l'update per questo frame per permettere la stabilizzazione fisica
+            return; 
         }
 
         // --- SISTEMA DI ANTI-SOVRAPPOSIZIONE (SMORZATO) ---
-        // 1. Forza di separazione rispetto ad altri alleati
         allies.forEach(other => {
-            if (other === this || other.isSaluting) return;
+            if (!other || other === this || other.isSaluting) return;
             let dx = this.x - other.x;
-            if (dx === 0) dx = (Math.random() - 0.5) * 2; 
-            let minDist = this.width + 10; // Leggermente più largo della hitbox
-            if (Math.abs(dx) < minDist) {
-                // Forza di separazione ancora più dolce per stabilità assoluta
-                let force = (minDist - Math.abs(dx)) * 1.5; 
+            if (Math.abs(dx) < this.width + 10) {
+                if (dx === 0) dx = (Math.random() - 0.5) * 2; 
+                let force = (this.width + 10 - Math.abs(dx)) * 1.5; 
                 this.vx += (dx > 0 ? 1 : -1) * force;
-                this.vx *= 0.9; // Forte attrito durante il contatto
+                this.vx *= 0.9;
             }
         });
 
-        // 2. Forza di separazione rispetto al giocatore (Molto fluida)
         let dxPlayer = this.x - player.x;
-        let playerMinDist = 110; 
-        if (Math.abs(dxPlayer) < playerMinDist) {
-            let force = (playerMinDist - Math.abs(dxPlayer)) * 2;
+        if (Math.abs(dxPlayer) < 110) {
+            let force = (110 - Math.abs(dxPlayer)) * 2;
             this.vx += (dxPlayer > 0 ? 1 : -1) * force;
         }
 
         // --- LOGICA DI TARGETING: GUARDIAN MODE ---
         let priorityTarget = null;
-        let pMinDist = 1100; // --- RAGGIO GUARDIANO RADDOPPIATO (1100px) ---
+        let pMinDistSq = 1210000; // 1100^2
         
-        // 1. Cerca nemici che minacciano direttamente l'Eroe
         enemies.forEach(z => {
-            if (z.state !== 'dead' && z.state !== 'emerging') {
-                let d = Math.hypot(z.x - player.x, z.y - player.y);
-                if (d < pMinDist) {
-                    pMinDist = d;
+            if (z && z.hp > 0 && z.state !== 'dead' && z.state !== 'emerging') {
+                let dx = z.x - player.x;
+                let dy = z.y - player.y;
+                let dSq = dx * dx + dy * dy;
+                if (dSq < pMinDistSq) {
+                    pMinDistSq = dSq;
                     priorityTarget = z;
                 }
             }
         });
 
-        // --- SISTEMA DI TARGETING GERARCHICO (Normale > Boss) ---
         let nearestNormalToAlly = null;
         let nearestNormalOnSameFloor = null;
         let nearestBossToAlly = null;
         let nearestBossOnSameFloor = null;
         
-        let normalMinDist = 2200; 
+        let normalMinDistSq = 4840000; // 2200^2
         let normalSameFloorMinDist = 800;
-        let bossMinDist = 2200;
+        let bossMinDistSq = 4840000;
         let bossSameFloorMinDist = 800;
 
         enemies.forEach(z => {
-            if (z.hp > 0 && z.state !== 'dead' && z.state !== 'emerging') {
+            if (z && z.hp > 0 && z.state !== 'dead' && z.state !== 'emerging') {
                 let dx = Math.abs(z.x - this.x);
                 let dy = Math.abs(z.y - this.y);
-                let d = Math.hypot(dx, dy);
-
-                // --- CALCOLO PIANO: CONFRONTO AI PIEDI (Punto di contatto col suolo) ---
-                // Importante per nemici giganti come l'Omega Zombie (220px)
+                let dSq = dx * dx + dy * dy;
                 let df = Math.abs((z.y + (z.height || 80)) - (this.y + this.height));
 
                 if (z.isBoss) {
-                    // TIER 2: Boss
-                    if (d < bossMinDist) { bossMinDist = d; nearestBossToAlly = z; }
+                    if (dSq < bossMinDistSq) { bossMinDistSq = dSq; nearestBossToAlly = z; }
                     if (df < 50 && dx < bossSameFloorMinDist) { bossSameFloorMinDist = dx; nearestBossOnSameFloor = z; }
                 } else {
-                    // TIER 1: Normali (Priorità Assoluta)
-                    if (d < normalMinDist) { normalMinDist = d; nearestNormalToAlly = z; }
+                    if (dSq < normalMinDistSq) { normalMinDistSq = dSq; nearestNormalToAlly = z; }
                     if (df < 50 && dx < normalSameFloorMinDist) { normalSameFloorMinDist = dx; nearestNormalOnSameFloor = z; }
                 }
             }
         });
 
-        // La Selezione del Bersaglio segue la gerarchia Normali -> Player Defense -> Boss
         let bestTarget = (nearestNormalOnSameFloor || nearestNormalToAlly) || (priorityTarget && !priorityTarget.isBoss ? priorityTarget : null) || nearestBossOnSameFloor || nearestBossToAlly;
 
-        // --- LOGICA DI TARGETING AGGRESSIVA (Priorità Sterminio) ---
-        // Se sta già combattendo, insegue implacabilmente fino a 1500px
-        let detectionRange = (this.state === 'fight') ? 1500 : 1200;
-        let finalTargetX = player.x;
-        let finalTargetY = player.y;
-
-        // Se il timer AI è attivo, mantiene lo stato precedente per stabilità
         if (this.aiTimer <= 0) {
-            // --- LOGICA AGGRESSIVA: Cerca e Distruggi ---
-            if (bestTarget) {
-                // Decide se ingaggiare in base alla distanza del target scelto
-                let targetDist = bestTarget.isBoss ? bossMinDist : normalMinDist;
+            if (bestTarget && bestTarget.hp > 0) {
+                let dx = bestTarget.x - this.x;
+                let dy = bestTarget.y - this.y;
+                let targetDistSq = dx * dx + dy * dy;
+                let detectionRangeSq = (this.state === 'fight') ? 2250000 : 1440000; // 1500^2 : 1200^2
                 
-                if (targetDist < detectionRange) {
+                if (targetDistSq < detectionRangeSq) {
                     this.state = 'fight';
                     this.target = bestTarget;
                 } else {
@@ -2522,39 +2514,31 @@ class HeroAlly {
                     this.target = player;
                 }
             } else {
-                // Ritorna dall'Eroe solo se l'area è pulita
                 this.state = 'follow';
                 this.target = player;
             }
         }
 
-        // Calcola coordinate target finali in base allo stato consolidato
+        let finalTargetX = player.x;
+        let finalTargetY = player.y;
+
         if (this.state === 'fight' && this.target && this.target.hp > 0) {
             finalTargetX = this.target.x;
             finalTargetY = this.target.y;
         } else {
-            // --- LOGICA DI COMPAGNIA LIBERA (NO SLOT / NO FORMAZIONE) ---
             let distToPlayerAbs = Math.abs(player.x - this.x);
-            let safeRadius = 450; // Raggio di libertà intorno all'eroe
-
+            let safeRadius = 450;
             if (distToPlayerAbs > this.leashRange || Math.abs(player.y - this.y) > 200) {
-                // TROPPO LONTANO O ALTRO LIVELLO: Rientra nel raggio d'azione dell'eroe
-                // Puntiamo all'eroe ma con un piccolo offset casuale per evitare sovrapposizioni
                 finalTargetX = player.x + (this.x < player.x ? 60 : -60);
                 this.wanderTargetX = finalTargetX;
             } else if (distToPlayerAbs > safeRadius) {
-                // VICINO AL LIMITE: Si avvicina lentamente al raggio di sicurezza
                 finalTargetX = player.x;
             } else {
-                // DENTRO IL RAGGIO: Libero di muoversi autonomamente (Wander)
                 this.wanderTimer -= dt;
                 if (this.wanderTimer <= 0) {
-                    // Sceglie un punto casuale DENTRO il raggio di protezione dell'eroe
                     this.wanderTargetX = player.x + (Math.random() - 0.5) * (safeRadius * 1.5);
                     this.wanderTimer = 3.0 + Math.random() * 5.0; 
                 }
-                
-                // Se è vicino al suo punto di wandering, si ferma o guarda intorno
                 if (Math.abs(this.wanderTargetX - this.x) < 60) {
                     finalTargetX = this.x; 
                     if (Math.random() < 0.01) this.direction *= -1;
@@ -2565,33 +2549,23 @@ class HeroAlly {
             finalTargetY = player.y;
         }
 
-        // --- VINCOLO TARGET ALLO SCHERMO (Nuovo) ---
-        // Impedisce all'IA di voler uscire dalla visuale
         const screenMargin = 40;
         finalTargetX = Math.max(camera.x + screenMargin, Math.min(camera.x + canvas.width - screenMargin, finalTargetX));
 
-        // --- STABILIZZAZIONE NAVIGAZIONE SCALE (Fix Blocchi in Combattimento) ---
         if (this.isClimbing && !this.target) {
-            // Segue il player solo se non ha un bersaglio prioritario
             finalTargetY = player.y; 
         }
 
-        // --- SISTEMA DI NAVIGAZIONE INTELLIGENTE (LIVELLI E SCALE) ---
         let heightDiff = finalTargetY - this.y;
         let pCenterX = this.x + this.width / 2;
-
-        // Se il target è sullo stesso piano (o quasi), cammina normalmente
         let isOnSameLevel = Math.abs(heightDiff) < 60;
 
-        // Se il target è su un livello differente E non abbiamo minacce immediate sul piano attuale, cerchiamo il percorso
         if (!isOnSameLevel) {
             let bestPathX = null;
             let minPathDist = 3000;
 
-            // 1. Cerca la scala più vicina che porti nella direzione verticale giusta
-            world.interactables.forEach(i => {
+            localInteractables.forEach(i => {
                 if (i.type === 'ladder') {
-                    // La scala è utile se porta verso l'alto (se alto) o verso il basso (se basso)
                     let connectsToTarget = (heightDiff < 0) ? (i.y < this.y - 30) : (i.y + i.height > this.y + 30);
                     if (connectsToTarget) {
                         let d = Math.abs(i.x + i.width / 2 - pCenterX);
@@ -2603,62 +2577,48 @@ class HeroAlly {
                 }
             });
 
-            // 3. SE IL TARGET È SOTTO E NON CI SONO SCALE, CERCA IL BORDO (DROP-OFF)
             if (bestPathX === null) {
-                // Troviamo la piattaforma su cui si trova l'alleato
                 let currentPlat = null;
-                world.platforms.forEach(p => {
+                localPlatforms.forEach(p => {
                     if (this.x + this.width > p.x && this.x < p.x + p.width && Math.abs(this.y + this.height - p.y) < 20) {
                         currentPlat = p;
                     }
                 });
 
                 if (currentPlat) {
-                    // Direzione verso la quale dobbiamo buttarci per raggiungere l'obiettivo
                     if (finalTargetX < currentPlat.x) {
-                        bestPathX = currentPlat.x - 30; // Destinazione: Oltre il bordo sinistro
+                        bestPathX = currentPlat.x - 30;
                     } else if (finalTargetX > currentPlat.x + currentPlat.width) {
-                        bestPathX = currentPlat.x + currentPlat.width + 30; // Destinazione: Oltre il bordo destro
+                        bestPathX = currentPlat.x + currentPlat.width + 30;
                     } else {
-                        // Se l'obiettivo è ESATTAMENTE SOTTO di noi, ma non abbiamo scale: 
-                        // Scegliamo il bordo più vicino
                         let distL = Math.abs(this.x - currentPlat.x);
                         let distR = Math.abs(this.x - (currentPlat.x + currentPlat.width));
                         bestPathX = (distL < distR) ? currentPlat.x - 30 : currentPlat.x + currentPlat.width + 30;
                     }
                 }
             }
-
-            // Se abbiamo trovato un punto di transizione (scala, salto o bordo), lo impostiamo
-            if (bestPathX !== null) {
-                finalTargetX = bestPathX;
-            }
+            if (bestPathX !== null) finalTargetX = bestPathX;
         }
 
         let nearLadder = null;
-        world.interactables.forEach(i => {
+        localInteractables.forEach(i => {
             if (i.type === 'ladder' && Math.abs(i.x + i.width / 2 - this.x) < 60) {
                 nearLadder = i;
             }
         });
 
-        // heightDiff è già calcolato sopra
         if (nearLadder && Math.abs(heightDiff) > 50 && !this.isClimbing && this.ladderCooldown <= 0) {
-            // Se il target è su un altro livello, usa la scala
             if ((heightDiff < 0 && nearLadder.y < this.y) || (heightDiff > 0 && nearLadder.y + nearLadder.height > this.y)) {
                 this.isClimbing = true;
-                // Snap preciso al centro della scala
                 this.x = nearLadder.x + nearLadder.width / 2 - this.width / 2;
                 this.vx = 0;
             }
         }
 
-        // --- MANOVRA DI SALTO VERTICALE (Per raggiungere piattaforme senza scale) ---
         if (!this.isClimbing && this.isGrounded && heightDiff < -120) {
-            // Se il target è sopra di noi, saltiamo ogni tanto per cercare di agganciare piattaforme superiori
             if (Math.random() < 0.02) { 
                 this.vy = this.jumpPower;
-                this.vx = (finalTargetX > this.x) ? 150 : -150; // Spinta verso il target durante il salto
+                this.vx = (finalTargetX > this.x) ? 150 : -150;
             }
         }
 
@@ -2666,13 +2626,12 @@ class HeroAlly {
             this.vx = 0;
             this.vy = (heightDiff > 0) ? 200 : -220;
 
-            // --- PROTEZIONE CADUTA SOTTO-MAPPA (ALLEATI) ---
             if (this.vy > 0) {
-                world.platforms.forEach(p => {
+                localPlatforms.forEach(p => {
                     if (this.x + this.width > p.x && this.x < p.x + p.width) {
                         if (this.y + this.height > p.y && this.y + this.height < p.y + 20) {
                             this.isClimbing = false;
-                            this.ladderCooldown = 1.5; // AGGIUNTO: Cooldown anche sull'atterraggio floor
+                            this.ladderCooldown = 1.5;
                             this.isGrounded = true;
                             this.y = p.y - this.height;
                             this.vy = 0;
@@ -2681,77 +2640,61 @@ class HeroAlly {
                 });
             }
 
-            // --- LOGICA DI USCITA ROBUSTA (Antiloc-Loop) ---
-            let reachedTop = (this.y + this.height < nearLadder.y + 5 && heightDiff < -20);
-            let reachedBottom = (this.y > nearLadder.y + nearLadder.height - 5 && heightDiff > 20);
+            let reachedTop = nearLadder && (this.y + this.height < nearLadder.y + 5 && heightDiff < -20);
+            let reachedBottom = nearLadder && (this.y > nearLadder.y + nearLadder.height - 5 && heightDiff > 20);
             let targetReached = Math.abs(heightDiff) < 30;
 
             if (reachedTop || reachedBottom || targetReached || !nearLadder) {
                 this.isClimbing = false;
-                this.ladderCooldown = 1.6; // Cooldown potenziato (1.6s)
-                this.vy = -450; // Salto di sbarco più potente
-                // Forza laterale incrementata per allontanarsi drasticamente dalla scala
+                this.ladderCooldown = 1.6;
+                this.vy = -450;
                 this.vx = (finalTargetX > this.x) ? 600 : -600; 
-                this.x += (this.vx * 0.08); // Spostamento immediato di sicurezza più lungo
+                this.x += (this.vx * 0.08);
                 this.y -= 8;
             }
         } else {
-            // --- LOGICA DI CAMMINATA E COMBATTIMENTO ---
             let moveSpeed = (this.state === 'fight') ? this.speed * 1.6 : this.speed;
             if (this.x < finalTargetX - 15) {
                 this.vx = moveSpeed;
             } else if (this.x > finalTargetX + 15) {
                 this.vx = -moveSpeed;
             } else {
-                // Attrito più forte quando è nel range del target per evitare jitter
                 this.vx *= 0.7;
             }
 
-            // --- ORIENTAMENTO INTELLIGENTE (Fix Shaking/Moonwalking) ---
             if (this.isAttacking && this.target) {
-                // Durante l'attacco, guarda sempre il nemico
                 this.direction = (this.target.x > this.x) ? 1 : -1;
             } else if (Math.abs(this.vx) > 55) {
-                // Soglia alzata (da 20 a 55) per stabilità visiva durante le spinte
                 this.direction = (this.vx > 0) ? 1 : -1;
             } else if (this.state === 'fight' && this.target) {
-                // Se è in combattimento ma quasi fermo, guarda il bersaglio
                 this.direction = (this.target.x > this.x) ? 1 : -1;
             } else if (Math.abs(this.vx) > 30) {
-                // Soglia alzata anche per il fallback
                 this.direction = (this.vx > 0) ? 1 : -1;
             }
 
-            // Salto ostacoli (Muretti/Voxel)
             if (this.isGrounded && Math.abs(this.vx) > 10) {
                 let wallCheck = (this.direction === 1) ? world.isSolid(this.x + this.width + 10, this.y + this.height - 10) : world.isSolid(this.x - 10, this.y + this.height - 10);
                 if (wallCheck) this.vy = -550;
             }
 
-            // Trigger Attacco (Portata della Forca - Stoccata)
-            if (this.target && this.state === 'fight' && this.attackCooldown <= 0) {
+            if (this.target && this.target.hp > 0 && this.state === 'fight' && this.attackCooldown <= 0) {
                 let dToTarget = Math.abs(this.target.x - this.x);
-                if (dToTarget < 160) { // Aumentata portata (Forca)
+                if (dToTarget < 160) {
                     this.isAttacking = true;
                     this.attackTimer = this.attackDuration;
-                    this.attackCooldown = 0.4; // Colpi più lenti ma potenti
-                    playSound('slash'); // Suono di fendente per ora
+                    this.attackCooldown = 0.4;
+                    playSound('slash');
                 }
             }
         }
 
-        // --- SISTEMA FISICO UNIVERSALE ---
-        // La gravità agisce solo se non stiamo scalando
         if (!this.isClimbing) {
             this.vy += this.gravity * dt;
         }
 
-        // Aggiornamento coordinate (Ora corretti fuori dal blocco else!)
         this.x += this.vx * dt;
         this.y += this.vy * dt;
 
-        // --- VINCOLO FISICO ALLO SCHERMO (Nuovo) ---
-        // Forza l'alleato a stare in visuale (viene spinto dalla telecamera)
         const wallPadding = 20;
         const leftLimit = camera.x + wallPadding;
         const rightLimit = camera.x + canvas.width - this.width - wallPadding;
@@ -2764,18 +2707,11 @@ class HeroAlly {
             if (this.vx > 0) this.vx = 0;
         }
 
-
-        // Collisioni con il terreno (Solo se non stiamo scalando)
         if (!this.isClimbing) {
             this.isGrounded = false;
-            world.platforms.forEach(p => {
-                // --- FIX COLLISIONE: CONTROLLO BOUNDING BOX PROPRIO ---
-                // Verifica se l'alleato è allineato orizzontalmente con la piattaforma (inclusa la sua larghezza)
+            localPlatforms.forEach(p => {
                 if (this.x + this.width < p.x - 5 || this.x > p.x + p.width + 5) return;
-                
                 if (p.isOneWay && this.vy < 0) return;
-                
-                // Atterraggio (Logica allineata a quella del Player per massima stabilità)
                 if (this.vy >= 0 && this.y + this.height >= p.y && this.y + this.height <= p.y + 20 + this.vy * dt) {
                     this.y = p.y - this.height;
                     this.vy = 0;
@@ -2784,7 +2720,6 @@ class HeroAlly {
             });
         }
 
-        // --- GESTIONE SQUASH & STRETCH (Atterraggio Alleato) ---
         if (this.isGrounded && !this.wasGrounded) {
             this.visualScaleY = 0.7;
             this.visualScaleX = 1.3;
@@ -2795,17 +2730,14 @@ class HeroAlly {
         this.visualScaleY += (1 - this.visualScaleY) * 0.15;
         this.visualScaleX += (1 - this.visualScaleX) * 0.15;
 
-
         if (this.isAttacking) {
             let progress = (this.attackDuration - this.attackTimer) / this.attackDuration;
-            
             if (progress > 0.25 && progress < 0.65) {
                 if (!this.hasLunged) {
-                    this.vx += this.direction * 500; // Affondo potenziato
+                    this.vx += this.direction * 500;
                     this.hasLunged = true;
                 }
             }
-
             this.attackTimer -= dt;
             if (this.attackTimer <= 0) {
                 this.isAttacking = false;
@@ -2813,20 +2745,13 @@ class HeroAlly {
             }
 
             enemies.forEach(z => {
-                // --- HITBOX DINAMICA PER L'ATTACCO ---
-                // Se è un Boss gigante (220px), aumentiamo drasticamente la portata verticale dell'affondo
-                let verticalReach = z.isBoss ? 160 : 65; 
-                let horizontalReach = z.isBoss ? 120 : 85;
-
-                if (z.state !== 'dead' && Math.abs(z.x - this.x) < horizontalReach && Math.abs(z.y - this.y) < verticalReach) {
+                if (z && z.state !== 'dead' && Math.abs(z.x - this.x) < (z.isBoss ? 120 : 85) && Math.abs(z.y - this.y) < (z.isBoss ? 160 : 65)) {
                     if (z.isHit <= 0) {
                         z.hp -= 1;
                         z.isHit = 0.4;
                         z.vx = this.direction * 350;
-                        if (!z.isBoss) z.vy = -120; // Non facciamo saltare il Boss!
+                        if (!z.isBoss) z.vy = -120;
                         playSound('zombie_hit', z.x, z.y);
-                        
-                        // Anche gli alleati causano un piccolo Hit-Stop e scossone
                         hitStopTimer = 0.04; 
                         screenShake = 6;
                     }
@@ -3054,35 +2979,34 @@ class Zombie {
     }
 
     update(dt, world, player) {
-        if (this.isHit > 0) {
-            this.isHit -= dt;
-            // Se colpito mentre sale, cade dalla scala e ha un cooldown
-            if (this.isClimbing) {
-                this.isClimbing = false;
-                this.climbTimer = 0.8;
+        // --- OTTIMIZZAZIONE SPAZIALE: GRID-BASED CULLING ---
+        let startIdx = Math.floor((this.x - 800) / world.gridSize);
+        let endIdx = Math.floor((this.x + 800) / world.gridSize);
+        let localPlatforms = [];
+        let seenPlats = new Set();
+        for (let i = startIdx; i <= endIdx; i++) {
+            let cell = world.grid[i];
+            if (cell && cell.platforms) {
+                cell.platforms.forEach(p => { if (!seenPlats.has(p)) { seenPlats.add(p); localPlatforms.push(p); } });
             }
         }
-        if (this.climbTimer > 0) this.climbTimer -= dt;
 
-        if (this.isGrounded && Math.abs(this.vx) > this.speed) {
-            this.vx *= 0.8; // Freno inerziale dopo uno sbalzo Knockback
+        if (this.isHit > 0) {
+            this.isHit -= dt;
+            if (this.isClimbing) { this.isClimbing = false; this.climbTimer = 0.8; }
         }
-
+        if (this.climbTimer > 0) this.climbTimer -= dt;
+        if (this.isGrounded && Math.abs(this.vx) > this.speed) this.vx *= 0.8;
 
         switch (this.state) {
             case 'dormant':
-                // Respira lentamente stando seduto / immobile
-                // --- RILEVAMENTO LIMITATO (Fix Suicidio degli Zombie Bianchi) ---
                 let d = Math.abs(player.x - this.x);
                 let playerInCave = player.y > 650;
-
-                // Se è uno zombie bianco, si sveglia solo se il giocatore entra nella grotta
                 let shouldWake = (this.type === 'white') ? (d < 350 && playerInCave) : (d < 300);
-
                 if (shouldWake) {
                     playSound('wake', this.x, this.y);
                     this.state = 'emerging';
-                    this.timer = 0.5; // RIDOTTO: Da 1.0 a 0.5s
+                    this.timer = 0.5;
                 }
                 break;
 
@@ -3092,426 +3016,218 @@ class Zombie {
                 break;
 
             case 'chasing':
-                // --- VULNERABILITÀ AL SOLE (ZOMBIE BIANCHI) ---
                 if (this.type === 'white' && timeOfDay > 5 && timeOfDay < 19 && this.y < 650) {
-                    // Gli zombie bianchi evaporano all'istante sotto la luce solare
-                    this.hp = 0;
-                    this.state = 'dead';
+                    this.hp = 0; this.state = 'dead';
                     playSound('zombie_hit', this.x, this.y);
-                    // Effetto Dissoluzione Pixel Art Professional
                     createPixelDissolve(this.x, this.y, this.width, this.height, ['#FFFFFF', '#F0F0F0', '#CCCCCC']);
                     return;
                 }
 
                 if (this.isAlly) {
-                    // --- IA ALLEATO (Protezione e Attacco) ---
                     let nearestEnemy = null;
-                    let minDist = 450; // Range di avvistamento nemici
-
+                    let minDistSq = 202500; // 450^2
                     enemies.forEach(z => {
-                        if (!z.isAlly && z.state !== 'dead' && z.state !== 'emerging') {
-                            let dist = Math.abs(z.x - this.x);
-                            if (dist < minDist) {
-                                minDist = dist;
-                                nearestEnemy = z;
-                            }
+                        if (z && !z.isAlly && z.state !== 'dead' && z.state !== 'emerging') {
+                            let dx = z.x - this.x;
+                            let dy = z.y - this.y;
+                            let dSq = dx * dx + dy * dy;
+                            if (dSq < minDistSq) { minDistSq = dSq; nearestEnemy = z; }
                         }
                     });
-
-                    let targetX = player.x; // Di default segue il player
+                    let targetX = player.x;
                     if (nearestEnemy) {
                         targetX = nearestEnemy.x;
                         this.targetEnemy = nearestEnemy;
                     } else {
                         this.targetEnemy = null;
-                        // Resta a distanza Sociale dal player per non intralciarlo
                         if (Math.abs(player.x - this.x) < 80) targetX = this.x;
                     }
-
-                    // Logica di attacco alleato (Semplificata: si scaglia addosso)
-                    if (nearestEnemy && minDist < 60 && !this.isClimbing) {
-                        if (Math.random() > 0.95) { // Attacco casuale
+                    if (nearestEnemy && Math.abs(nearestEnemy.x - this.x) < 60 && !this.isClimbing) {
+                        if (Math.random() > 0.95) {
                             nearestEnemy.hp -= 1;
                             nearestEnemy.isHit = 0.5;
                             playSound('hit', nearestEnemy.x, nearestEnemy.y);
-                            createDust(nearestEnemy.x, nearestEnemy.y, 2);
                         }
                     }
-
-                    // Movimento IA Alleato
-                    if (this.x < targetX - 40) {
-                        this.direction = 1;
-                        this.vx = this.speed * 1.1;
-                    } else if (this.x > targetX + 40) {
-                        this.direction = -1;
-                        this.vx = -this.speed * 1.1;
-                    } else {
-                        this.vx *= 0.8;
-                    }
-
+                    if (this.x < targetX - 40) { this.direction = 1; this.vx = this.speed * 1.1; }
+                    else if (this.x > targetX + 40) { this.direction = -1; this.vx = -this.speed * 1.1; }
+                    else { this.vx *= 0.8; }
                 } else if (this.type === 'surface' && timeOfDay > 5 && timeOfDay < 19 && this.y < 650) {
-                    // Solo gli zombie di superficie scavano al sole (e solo se fuori)
-                    this.state = 'digging';
-                    this.timer = 2.5;
-                    this.vx = 0;
+                    this.state = 'digging'; this.timer = 2.5; this.vx = 0;
                 } else {
-                    // --- SISTEMA DI NAVIGAZIONE INTELLIGENTE (Fix Ping-Pong) ---
                     let targetX = player.x;
                     let pCenterX = this.x + this.width / 2;
                     let distToPlayerY = Math.abs(player.y - this.y);
                     let isTrappedInCave = this.y > 650;
-
                     let playerInCave = player.y > 650;
-
                     let bestPathX = null;
                     if (distToPlayerY > 100) {
                         let minPathDist = 4000;
-
-                        // 1. Cerca la scala più vicina che porti nella direzione giusta
                         world.interactables.forEach(i => {
                             if (Math.abs(i.x - this.x) > 700) return;
                             if (i.type === 'ladder') {
-                                // SICUREZZA: Se è giorno e siamo sotto terra, non prendiamo scale verso l'alto (Suicidio)
                                 let isSunlightDanger = (timeOfDay > 5 && timeOfDay < 19 && this.y > 650 && i.y < 650);
                                 if (this.type === 'white' && isSunlightDanger && !playerInCave) return;
-
                                 let connectsToPlayer = (player.y < this.y) ? (i.y < this.y - 40) : (i.y + i.height > this.y + 40);
                                 if (connectsToPlayer) {
                                     let d = Math.abs(i.x + i.width / 2 - pCenterX);
-                                    if (d < minPathDist) {
-                                        minPathDist = d;
-                                        bestPathX = i.x + i.width / 2;
-                                    }
+                                    if (d < minPathDist) { minPathDist = d; bestPathX = i.x + i.width / 2; }
                                 }
                             }
                         });
-
-                        // 2. Se non ci sono scale o sono lontane, cerca mensole nelle grotte
                         if (isTrappedInCave && (!bestPathX || minPathDist > 800)) {
-                            world.platforms.forEach(p => {
+                            localPlatforms.forEach(p => {
                                 if (p.isStairs || (p.y < this.y - 20 && p.y > player.y - 50)) {
                                     let d = Math.abs(p.x + p.width / 2 - pCenterX);
-                                    if (d < minPathDist) {
-                                        minPathDist = d;
-                                        bestPathX = p.x + p.width / 2;
-                                    }
+                                    if (d < minPathDist) { minPathDist = d; bestPathX = p.x + p.width / 2; }
                                 }
                             });
                         }
-
-                        // Se abbiamo trovato un percorso, lo seguiamo ossessivamente finché non siamo vicini
-                        if (bestPathX !== null) {
-                            targetX = bestPathX;
-                        }
+                        if (bestPathX !== null) targetX = bestPathX;
                     }
-
-                    // --- IA DI NAVIGAZIONE CON SCALE (Lancio Arrampicata) ---
                     let nearLadder = null;
                     world.interactables.forEach(i => {
                         if (Math.abs(i.x - this.x) > 150) return;
-                        if (i.type === 'ladder') {
-                            // Hitbox di aggancio scala leggermente più generosa per gli zombie
-                            if (pCenterX > i.x - 30 && pCenterX < i.x + i.width + 30) {
-                                if (this.y + this.height > i.y && this.y < i.y + i.height) {
-                                    nearLadder = i;
-                                }
-                            }
+                        if (i.type === 'ladder' && pCenterX > i.x - 30 && pCenterX < i.x + i.width + 30) {
+                            if (this.y + this.height > i.y && this.y < i.y + i.height) nearLadder = i;
                         }
                     });
-
-                    // Decisione: Salire o camminare?
                     let heightDiff = player.y - this.y;
                     let nearTop = nearLadder && (this.y < nearLadder.y + 20 && heightDiff < 0);
-
-                    // Se siamo vicini a una scala e dobbiamo cambiare livello verticale
                     if (nearLadder && !nearTop && this.climbTimer <= 0 && this.isHit <= 0 && Math.abs(heightDiff) > 20 && Math.abs(nearLadder.x + nearLadder.width / 2 - pCenterX) < 60) {
                         this.isClimbing = true;
-                        this.x += (nearLadder.x + nearLadder.width / 2 - pCenterX) * 0.2; // Centratura
+                        this.x += (nearLadder.x + nearLadder.width / 2 - pCenterX) * 0.2;
                         this.vx = 0;
-                        this.vy = (heightDiff > 0) ? 160 : -180; // Salita leggermente più rapida
+                        this.vy = (heightDiff > 0) ? 160 : -180;
                     } else if (this.isClimbing) {
-                        // --- LOGICA DI SBARCO (Hoping off) ---
-                        // Se siamo arrivati in cima o vicini al target, facciamo un balzello per atterrare sulla piattaforma
                         if (nearTop || Math.abs(heightDiff) <= 25) {
-                            this.vy = -350; // Piccolo salto verso l'alto
-                            this.vx = (player.x > this.x) ? 250 : -250; // Salto verso il giocatore per sbarcare
+                            this.vy = -350;
+                            this.vx = (player.x > this.x) ? 250 : -250;
                             this.isGrounded = false;
                         }
                         this.isClimbing = false;
-                        this.climbTimer = 0.6; // Cooldown per evitare di riagganciarsi subito
+                        this.climbTimer = 0.6;
                     }
-
-
-                    if (this.isClimbing) {
-                        this.y += this.vy * dt;
-                        this.isGrounded = false;
-                        return;
-                    }
-
-                    // Insegue il target scelto (Player o Scala) con sparpagliamento di gruppo
+                    if (this.isClimbing) { this.y += this.vy * dt; this.isGrounded = false; return; }
                     let finalTargetX = targetX + this.targetOffset;
-
-                    // --- LOGICA ATTACCO A BALZO (LUNGE) ---
                     let distToPlayerX = Math.abs(player.x - pCenterX);
-                    this.lungeCooldown -= dt; // Gestione cooldown globale del balzo
-
-                    if (this.isGrounded && distToPlayerX > 150 && distToPlayerX < 350 && distToPlayerY < 100 && !this.isClimbing && this.lungeCooldown <= 0) {
+                    this.lungeCooldown -= dt;
+                    if (this.isGrounded && distToPlayerX > 150 && distToPlayerX < 350 && Math.abs(player.y - this.y) < 100 && !this.isClimbing && this.lungeCooldown <= 0) {
                         this.lungeTimer += dt;
                         if (this.lungeTimer > 1.0) {
-                            // BALZO!
-                            this.vy = -450;
-                            this.vx = this.direction * 450; // Scatto in avanti potente
-                            this.isGrounded = false;
-                            this.lungeTimer = 0;
-                            this.lungeCooldown = 3.0 + Math.random() * 2.0; // Pausa tra un balzo e l'altro
+                            this.vy = -450; this.vx = this.direction * 450;
+                            this.isGrounded = false; this.lungeTimer = 0;
+                            this.lungeCooldown = 3.0 + Math.random() * 2.0;
                             playSound('jump', this.x, this.y);
-                            this.visualScaleY = 1.6; // Si allunga nel balzo estremo
                         } else {
-                            // CARICA (Si schiaccia a terra indicando l'attacco imminente)
-                            this.visualScaleY = 0.55;
-                            this.visualScaleX = 1.4;
-                            this.vx *= 0.3; // Quasi si ferma mentre carica la molla
+                            this.visualScaleY = 0.55; this.visualScaleX = 1.4; this.vx *= 0.3;
                         }
                     } else {
-                        if (this.lungeTimer > 0) {
-                            // Se il player esce dal range mentre carichiamo, resettiamo
-                            this.lungeTimer = 0;
-                        }
-                        if (this.x < finalTargetX - 5) {
-                            this.direction = 1;
-                            if (this.vx < this.speed) this.vx += 25;
-                        } else if (this.x > finalTargetX + 5) {
-                            this.direction = -1;
-                            if (this.vx > -this.speed) this.vx -= 25;
-                        }
+                        if (this.lungeTimer > 0) this.lungeTimer = 0;
+                        if (this.x < finalTargetX - 5) { this.direction = 1; if (this.vx < this.speed) this.vx += 25; }
+                        else if (this.x > finalTargetX + 5) { this.direction = -1; if (this.vx > -this.speed) this.vx -= 25; }
                     }
 
-                    // --- SCHIVATA EVASIVA (Dopo essere stati colpiti) ---
                     if (this.isHit > 0.25 && this.isGrounded && !this.isDodging) {
-                        if (Math.random() > 0.7) { // 30% di probabilità di schivata
-                            this.isDodging = true;
-                            this.vy = -350;
-                            this.vx = -this.direction * 450; // Salto all'indietro
-                            this.isGrounded = false;
-                            playSound('jump', this.x, this.y);
+                        if (Math.random() > 0.7) {
+                            this.isDodging = true; this.vy = -350; this.vx = -this.direction * 450;
+                            this.isGrounded = false; playSound('jump', this.x, this.y);
                         }
                     }
                     if (this.isGrounded) this.isDodging = false;
 
-                    // -- IA SMART (Salto) --
                     if (this.isGrounded) {
                         let lookAheadX = this.direction === 1 ? this.x + this.width + 40 : this.x - 40;
                         let hasFloor = false;
                         let obstacleAhead = false;
-
-                        world.platforms.forEach(p => {
-                            // --- FIX AI: Rilevamento piano/ostacoli corretto ---
+                        localPlatforms.forEach(p => {
                             if (this.x + this.width < p.x - 200 || this.x > p.x + p.width + 200) return;
-                            
                             if (lookAheadX >= p.x && lookAheadX <= p.x + p.width) {
-                                if (p.y >= this.y + this.height - 30 && p.y <= this.y + this.height + 150) {
-                                    hasFloor = true;
-                                }
-                                if (p.y < this.y + this.height - 10 && p.y > this.y - 50) {
-                                    obstacleAhead = true;
-                                }
+                                if (p.y >= this.y + this.height - 30 && p.y <= this.y + this.height + 150) hasFloor = true;
+                                if (p.y < this.y + this.height - 10 && p.y > this.y - 50) obstacleAhead = true;
                             }
                         });
-
-                        let shouldJump = false;
-                        if (!hasFloor && Math.abs(targetX - this.x) < 600) {
-                            // Salta i buchi solo se necessario e con un pizzico di incertezza
-                            if (Math.random() > 0.3) shouldJump = true;
-                        }
-                        if (obstacleAhead) shouldJump = true;
-
-                        // Salta verso l'alto (piattaforme) solo se il target è decisamente sopra
-                        if ((player.y < this.y - 120 && Math.abs(player.x - this.x) < 200) || (isTrappedInCave && targetX !== player.x)) {
-                            shouldJump = true;
-                        }
-
+                        let shouldJump = (!hasFloor && Math.abs(targetX - this.x) < 600 && Math.random() > 0.3) || obstacleAhead || ((player.y < this.y - 120 && Math.abs(player.x - this.x) < 200) || (isTrappedInCave && targetX !== player.x));
                         if (shouldJump) {
                             this.jumpDelay += dt;
-                            // Aumentato il ritardo a 0.8s per farli "camminare" di più contro gli ostacoli
                             if (this.jumpDelay > 0.8) {
-                                let finalPower = this.jumpPower * (0.85 + Math.random() * 0.2);
-                                this.vy = finalPower;
+                                this.vy = this.jumpPower * (0.85 + Math.random() * 0.2);
                                 this.vx = this.direction * (this.speed * 1.2 + (Math.random() * 30));
-                                this.isGrounded = false;
-                                playSound('jump', this.x, this.y);
-                                this.jumpDelay = -0.5; // Cooldown dopo il salto
-                            } else {
-                                // Mentre decidono se saltare, rallentano invece di fermarsi del tutto
-                                this.vx *= 0.6;
-                            }
+                                this.isGrounded = false; playSound('jump', this.x, this.y); this.jumpDelay = -0.5;
+                            } else { this.vx *= 0.6; }
                         } else {
-                            this.jumpDelay = 0;
-                            if (!hasFloor) this.vx = 0; // Si fermano sull'orlo del baratro se decidono di non saltare
+                            this.jumpDelay = 0; if (!hasFloor) this.vx = 0;
                         }
                     }
                 }
-
-                // --- SISTEMA DI COMBATTIMENTO ZOMBIE (Attacco vs Player & Alleati) ---
-                if (!player.isHitTimer) player.isHitTimer = 0;
-                
-                // 1. Attacco vs Player (Inseguimento attivo)
-                if (player.isHitTimer <= 0 && this.hp > 0 && this.isHit <= 0 && this.state === 'chasing') {
+                if (player.hp > 0 && player.isHitTimer <= 0 && this.hp > 0 && this.isHit <= 0 && this.state === 'chasing') {
                     let pDx = Math.abs(player.x - (this.x + this.width/2));
                     let pDy = Math.abs(player.y - this.y);
                     if (pDx < 45 && pDy < 60) {
                         let facingEnemy = (this.x > player.x && player.direction === 1) || (this.x < player.x && player.direction === -1);
                         if (player.isParrying && facingEnemy) {
-                            // PARATA SPECIALE ARCADE
                             if (playerStyle === 'PALADIN') {
-                                playSound('hit', this.x, this.y);
-                                this.hp -= 1.0; 
-                                this.vx = -this.vx * 3.5;
-                                this.vy = -200;
-                                this.isHit = 0.5;
-                                player.isHitTimer = 0.3;
-                                createSparks(player.x + (40 * player.direction), player.y + 20, '#FFD700');
+                                playSound('hit', this.x, this.y); this.hp -= 1.0; this.vx = -this.vx * 3.5; this.vy = -200; this.isHit = 0.5; player.isHitTimer = 0.3;
                             } else {
-                                playSound('hit', this.x, this.y);
-                                player.shieldDurability--;
-                                this.vx = -this.vx * 1.5;
-                                player.isHitTimer = 0.5;
-                                createDust(player.x + 20 * player.direction, player.y + 20, 3);
-                                if (player.shieldDurability <= 0) {
-                                    player.hasShield = false;
-                                    playSound('break', player.x, player.y);
-                                    createPixelDissolve(player.x, player.y, 40, 80, ['#2c3e50', '#95a5a6', '#7f8c8d']);
-                                }
+                                playSound('hit', this.x, this.y); player.shieldDurability--; this.vx = -this.vx * 1.5; player.isHitTimer = 0.5;
                             }
                         } else {
-                            // DANNO PIENO (Giocatore colpito)
-                            playSound('player_hit');
-                            let dmg = 15;
-                            if (player.hasArmor) dmg *= 0.5;
-                            player.health -= dmg;
-                            player.vy = -350;
-                            player.isHitTimer = 1.0;
-                            
-                            // Update HUD (Emergenza)
-                            let hUI = document.getElementById('healthUI');
-                            if (hUI) hUI.innerText = `Salute: ${Math.floor(player.health)}${player.hasShield ? " | ESCUDO DIVINO: ATTIVO 🛡️✨" : ""}`;
+                            playSound('player_hit'); player.health -= (player.hasArmor ? 7.5 : 15); player.vy = -350; player.isHitTimer = 1.0;
                         }
                     }
                 }
-
-                // 2. Attacco vs Alleati (Inseguimento attivo)
                 allies.forEach(a => {
-                    if (a.hp > 0 && a.isHitTimer <= 0 && this.hp > 0 && this.isHit <= 0 && this.state === 'chasing') {
-                        let dAx = Math.abs(a.x - this.x);
-                        let dAy = Math.abs(a.y - this.y);
-                        if (dAx < 40 && dAy < 50) {
-                            playSound('player_hit', a.x, a.y);
-                            a.hp -= 10;
-                            a.isHitTimer = 0.8;
-                            a.vy = -200;
-                            a.vx = (a.x > this.x ? 100 : -100);
-                            createDust(a.x + a.width / 2, a.y + a.height, 5);
+                    if (a && a.hp > 0 && a.isHitTimer <= 0 && this.hp > 0 && this.isHit <= 0 && this.state === 'chasing') {
+                        if (Math.abs(a.x - this.x) < 40 && Math.abs(a.y - this.y) < 50) {
+                            playSound('player_hit', a.x, a.y); a.hp -= 10; a.isHitTimer = 0.8; a.vy = -200; a.vx = (a.x > this.x ? 100 : -100);
                         }
                     }
                 });
                 break;
 
             case 'digging':
-                this.timer -= dt;
-                // Costringerlo ad affondare ignorando il terreno duro per l'animazione mortale
-                this.vy += this.gravity * dt;
-                this.y += 12 * dt;
+                this.timer -= dt; this.vy += this.gravity * dt; this.y += 12 * dt;
                 if (this.timer <= 0) this.state = 'dead';
                 break;
 
             case 'dead':
-                this.vy += this.gravity * dt; // Cade preda dell'abisso
+                this.vy += this.gravity * dt;
                 break;
         }
 
-        if (this.state !== 'dead' && this.state !== 'digging') {
-            this.vy += this.gravity * dt;
-        }
-
-        // 1. FISICA ORIZZONTALE & COLLISIONE (Ottimizzata)
+        if (this.state !== 'dead' && this.state !== 'digging') this.vy += this.gravity * dt;
         this.x += this.vx * dt;
-        world.platforms.forEach(p => {
-            // --- FIX COLLISIONE ORIZZONTALE ZOMBIE ---
-            if (this.x + this.width < p.x - 50 || this.x > p.x + p.width + 50) return;
-
-            // "Piattaforme Unidirezionali" (One-Way) per Zombie
-            let isOneWay = p.height <= 30 || p.isStairs || p.isBridge;
-            if (isOneWay) return;
-
+        localPlatforms.forEach(p => {
+            if (this.x + this.width < p.x - 50 || this.x > p.x + p.width + 50 || p.height <= 30 || p.isStairs || p.isBridge) return;
             if (this.y + this.height > p.y + 5 && this.y < p.y + p.height - 5) {
-                if (this.vx > 0 && this.x + this.width > p.x && this.x < p.x + 10) {
-                    this.x = p.x - this.width;
-                    this.vx = 0;
-                }
-                else if (this.vx < 0 && this.x < p.x + p.width && this.x + this.width > p.x + p.width - 10) {
-                    this.x = p.x + p.width;
-                    this.vx = 0;
-                }
+                if (this.vx > 0 && this.x + this.width > p.x && this.x < p.x + 10) { this.x = p.x - this.width; this.vx = 0; }
+                else if (this.vx < 0 && this.x < p.x + p.width && this.x + this.width > p.x + p.width - 10) { this.x = p.x + p.width; this.vx = 0; }
             }
         });
-
-        // 2. FISICA VERTICALE & COLLISIONE
-        if (this.state !== 'digging') {
-            this.y += this.vy * dt;
-        }
-
+        if (this.state !== 'digging') this.y += this.vy * dt;
         if (this.state !== 'digging' && this.state !== 'dead') {
             this.isGrounded = false;
-            world.platforms.forEach(p => {
-                // --- FIX COLLISIONE VERTICALE ZOMBIE ---
+            localPlatforms.forEach(p => {
                 if (this.x + this.width < p.x - 5 || this.x > p.x + p.width + 5) return;
-
                 if (this.x < p.x + p.width - 5 && this.x + this.width > p.x + 5) {
                     if (this.vy >= 0 && this.y + this.height >= p.y && this.y + this.height <= p.y + 20 + this.vy * dt) {
-                        this.isGrounded = true;
-                        this.vy = 0;
-                        this.y = p.y - this.height;
-                    }
-                    else if (this.vy < 0 && this.y <= p.y + p.height && this.y >= p.y + p.height - 20) {
-                        let isOneWay = p.height <= 30 || p.isStairs || p.isBridge;
-                        if (!isOneWay) {
-                            this.vy = 0;
-                            this.y = p.y + p.height;
-                        }
+                        this.isGrounded = true; this.vy = 0; this.y = p.y - this.height;
+                    } else if (this.vy < 0 && this.y <= p.y + p.height && this.y >= p.y + p.height - 20) {
+                        if (!(p.height <= 30 || p.isStairs || p.isBridge)) { this.vy = 0; this.y = p.y + p.height; }
                     }
                 }
             });
-
-            // --- GESTIONE SQUASH & STRETCH (Atterraggio Zombie) ---
             if (this.isGrounded && !this.wasGrounded) {
-                this.visualScaleY = 0.75;
-                this.visualScaleX = 1.2;
-                createDust(this.x + this.width / 2, this.y + this.height, 3);
+                this.visualScaleY = 0.75; this.visualScaleX = 1.2; createDust(this.x + this.width / 2, this.y + this.height, 3);
             }
             this.wasGrounded = this.isGrounded;
-
-            // Logica Morte Alleato (Saluto)
-            if (this.isAlly && this.hp <= 0 && !this.isSaluting) {
-                this.isSaluting = true;
-                this.state = 'dead';
-                this.saluteTimer = 2.0;
-                this.vx = 0;
-            }
-
-
             this.visualScaleY += (1 - this.visualScaleY) * 0.1;
             this.visualScaleX += (1 - this.visualScaleX) * 0.1;
-
         } else if (this.state === 'dead') {
             if (this.isSaluting) {
-                this.saluteTimer -= dt;
-                this.deadOpacity = Math.max(0, this.saluteTimer / 2.0);
-                this.deadRotation = 0; // Sta dritto per salutare l'eroe
-                if (this.saluteTimer <= 0) {
-                    this.state = 'dead';
-                }
+                this.saluteTimer -= dt; this.deadOpacity = Math.max(0, this.saluteTimer / 2.0);
             } else {
-                this.deadRotation += (Math.PI / 2 - this.deadRotation) * 0.1;
-                this.deadOpacity -= dt * 0.5;
+                this.deadRotation += (Math.PI / 2 - this.deadRotation) * 0.1; this.deadOpacity -= dt * 0.5;
             }
             this.vx *= 0.9;
         }
@@ -3714,6 +3430,18 @@ class BossZombie {
     }
 
     update(dt, world, player) {
+        // --- OTTIMIZZAZIONE SPAZIALE: GRID-BASED CULLING ---
+        let startIdx = Math.floor((this.x - 1200) / world.gridSize);
+        let endIdx = Math.floor((this.x + 1200) / world.gridSize);
+        let localPlatforms = [];
+        let seenPlats = new Set();
+        for (let i = startIdx; i <= endIdx; i++) {
+            let cell = world.grid[i];
+            if (cell && cell.platforms) {
+                cell.platforms.forEach(p => { if (!seenPlats.has(p)) { seenPlats.add(p); localPlatforms.push(p); } });
+            }
+        }
+
         if (this.isHit > 0) this.isHit -= dt;
         if (this.slamVisualTimer > 0) this.slamVisualTimer -= dt;
         this.attackCooldown -= dt;
@@ -3732,160 +3460,81 @@ class BossZombie {
             case 'chasing':
                 let dx = player.x - (this.x + this.width / 2);
                 this.direction = dx > 0 ? 1 : -1;
-
-                if (this.isHit > 0) {
-                    this.vx = 0; 
-                } else if (Math.abs(dx) > 80) {
-                    this.vx = this.direction * this.speed;
-                } else {
-                    this.vx *= 0.85;
-                }
-
+                if (this.isHit > 0) { this.vx = 0; }
+                else if (Math.abs(dx) > 80) { this.vx = this.direction * this.speed; }
+                else { this.vx *= 0.85; }
                 if (this.attackCooldown <= 0) {
                     let dist = Math.abs(dx);
-                    if (dist < 220) {
-                        this.state = 'slamming';
-                        this.timer = 1.5; // Anticipazione molto lenta
-                        this.vx = 0;
-                    } else if (dist < 500) {
-                        this.state = 'charging';
-                        this.timer = 1.2;
-                        this.vx = 0;
-                    }
+                    if (dist < 220) { this.state = 'slamming'; this.timer = 1.5; this.vx = 0; }
+                    else if (dist < 500) { this.state = 'charging'; this.timer = 1.2; this.vx = 0; }
                 }
                 break;
 
             case 'slamming':
                 this.timer -= dt;
-                if (this.timer > 0.4) {
-                    this.visualScaleY = 1.3;
-                    this.visualScaleX = 0.85;
-                } else if (this.timer > 0) {
+                if (this.timer > 0.4) { this.visualScaleY = 1.3; this.visualScaleX = 0.85; }
+                else if (this.timer > 0) {
                     if (this.visualScaleY > 1) {
-                        this.visualScaleY = 0.5;
-                        this.visualScaleX = 1.7;
-                        this.slamVisualTimer = 0.5;
-                        screenShake = 45; // Impatto devastante
-                        playSound('break', this.x, this.y);
-                        
+                        this.visualScaleY = 0.5; this.visualScaleX = 1.7; this.slamVisualTimer = 0.5;
+                        screenShake = 45; playSound('break', this.x, this.y);
                         let bossCenterX = this.x + this.width / 2;
                         let bossCenterY = this.y + this.height / 2;
-                        let distToPlayer = Math.hypot(player.x - bossCenterX, player.y - bossCenterY);
-                        let dy = Math.abs(player.y - bossCenterY);
-
-                        // NUOVA HITBOX: Raggio 1.5x altezza (330px) ma solo LATERALMENTE (dy < 120)
-                        if (distToPlayer < 330 && dy < 120) {
-                            player.health -= 35; // Danni aumentati
-                            player.vy = -600;
-                            player.vx = (player.x > this.x ? 700 : -700);
-                            player.isHitTimer = 1.2;
-                            playSound('player_hit');
+                        let distToPlayerSq = Math.pow(player.x - bossCenterX, 2) + Math.pow(player.y - bossCenterY, 2);
+                        if (distToPlayerSq < 108900 && Math.abs(player.y - bossCenterY) < 120) {
+                            player.health -= 35; player.vy = -600; player.vx = (player.x > this.x ? 700 : -700); player.isHitTimer = 1.2;
                         }
-                        
-                        // Summon support (solo se necessario)
                         if (enemies.length < 12) {
                             spawnEnemyAtGround(this.x - 120, this.y, 'surface');
                             spawnEnemyAtGround(this.x + this.width + 120, this.y, 'surface');
                         }
                     }
-                } else {
-                    this.state = 'chasing';
-                    this.attackCooldown = 5.0 + Math.random() * 3.0; // Recupero lungo
-                }
+                } else { this.state = 'chasing'; this.attackCooldown = 5.0 + Math.random() * 3.0; }
                 break;
 
             case 'charging':
                 this.timer -= dt;
-                if (this.timer > 0) {
-                    this.visualScaleX = 0.8;
-                    this.direction = (player.x > this.x) ? 1 : -1;
-                } else {
-                    this.vx = this.direction * 500; // Carica un po' più lenta ma inarrestabile
-                    
-                    let dx = Math.abs(player.x - (this.x + this.width / 2));
-                    let dy = Math.abs(player.y - (this.y + this.height / 2));
-
-                    // COLPISCE SOLO LATERALMENTE (dy < 120) e nel raggio di carica
-                    if (dx < 160 && dy < 120) {
-                        player.health -= 25;
-                        player.isHitTimer = 1.0;
-                        player.vx = this.direction * 900;
-                        player.vy = -400;
-                        this.state = 'chasing';
-                        this.attackCooldown = 6.0;
-                        screenShake = 20;
-                        playSound('zombie_hit');
+                if (this.timer > 0) { this.visualScaleX = 0.8; this.direction = (player.x > this.x) ? 1 : -1; }
+                else {
+                    this.vx = this.direction * 500;
+                    if (Math.abs(player.x - (this.x + this.width / 2)) < 160 && Math.abs(player.y - (this.y + this.height / 2)) < 120) {
+                        player.health -= 25; player.isHitTimer = 1.0; player.vx = this.direction * 900; player.vy = -400;
+                        this.state = 'chasing'; this.attackCooldown = 6.0; screenShake = 20; playSound('zombie_hit');
                     }
-                    if (Math.abs(this.timer) > 2.0) {
-                        this.state = 'chasing';
-                        this.attackCooldown = 4.0;
-                    }
+                    if (Math.abs(this.timer) > 2.0) { this.state = 'chasing'; this.attackCooldown = 4.0; }
                 }
                 break;
 
-            case 'dead':
-                this.vx *= 0.9;
-                this.visualScaleY *= 0.98;
-                break;
+            case 'dead': this.vx *= 0.9; this.visualScaleY *= 0.98; break;
         }
 
-        if (this.state !== 'dead') {
-            this.vy += this.gravity * dt;
-        }
-
-        // 1. COLLISIONI ORIZZONTALI (MURI)
+        if (this.state !== 'dead') this.vy += this.gravity * dt;
         this.x += this.vx * dt;
-        
-        // Limiti Mappa
         if (this.x < 0) this.x = 0;
         if (this.x + this.width > world.mapWidth) this.x = world.mapWidth - this.width;
 
-        world.platforms.forEach(p => {
-            if (p.isOneWay || p.isBridge || p.isStairs) return; // Salta piattaforme passanti per i muri
-            
-            // AGGIUNTA: Se è in superficie, ignora solo i muri di terra (per il libero movimento).
-            // MA se è in Grotte o il muro è di tipo grotta, lo deve rispettare.
-            if (!p.isCave && this.y < 650) return; 
-
-            // Check collisione laterale con Rilevamento "Sweep" (25px o velocità frame)
-            let wallDetectSize = Math.max(25, Math.abs(this.vx * dt) + 5);
+        localPlatforms.forEach(p => {
+            if (p.isOneWay || p.isBridge || p.isStairs || (!p.isCave && this.y < 650)) return;
+            let sweep = Math.max(25, Math.abs(this.vx * dt) + 5);
             if (this.y + this.height > p.y + 10 && this.y < p.y + p.height - 10) {
-                if (this.vx > 0 && this.x + this.width > p.x && this.x < p.x + wallDetectSize) {
-                    this.x = p.x - this.width;
-                    this.vx = 0;
-                } else if (this.vx < 0 && this.x < p.x + p.width && this.x + this.width > p.x + p.width - wallDetectSize) {
-                    this.x = p.x + p.width;
-                    this.vx = 0;
-                }
+                if (this.vx > 0 && this.x + this.width > p.x && this.x < p.x + sweep) { this.x = p.x - this.width; this.vx = 0; }
+                else if (this.vx < 0 && this.x < p.x + p.width && this.x + this.width > p.x + p.width - sweep) { this.x = p.x + p.width; this.vx = 0; }
             }
         });
 
-        // 2. FISICA VERTICALE & COLLISIONI (FLOOR)
         this.y += this.vy * dt;
-
-        // Limite inferiore di sicurezza (Abisso) - Teletrasporto di Recupero
         if (this.y > 2200) {
-            this.x = player.x + (Math.random() * 200 - 100);
-            this.y = player.y - 150; // Riappare dall'alto come per l'alleato
-            this.vy = 0;
-            this.vx = 0;
-            this.visualScaleY = 1.5;
-            playSound('wake', this.x, this.y);
-            createDust(this.x, this.y, 20);
+            this.x = player.x + (Math.random() * 200 - 100); this.y = player.y - 150; this.vy = 0; this.vx = 0;
+            playSound('wake', this.x, this.y); createDust(this.x, this.y, 20);
         }
 
         this.isGrounded = false;
-        world.platforms.forEach(p => {
-            // "Sweep" collision: usiamo + this.vy * dt + 20 come margine per prevenire tunneling ad alte velocità
+        localPlatforms.forEach(p => {
             if (this.x + this.width > p.x + 5 && this.x < p.x + p.width - 5) {
                 if (this.vy >= 0 && this.y + this.height >= p.y && this.y + this.height <= p.y + 25 + (this.vy * dt)) {
-                    this.isGrounded = true;
-                    this.vy = 0;
-                    this.y = p.y - this.height;
+                    this.isGrounded = true; this.vy = 0; this.y = p.y - this.height;
                 }
             }
         });
-
         this.visualScaleY += (1 - this.visualScaleY) * 0.08;
         this.visualScaleX += (1 - this.visualScaleX) * 0.08;
     }
@@ -4378,8 +4027,29 @@ window.buyItem = function (item) {
 world = new World();
 player = new Player(world.platforms && world.platforms[0] ? world.platforms[0].x + 50 : 100, 400);
 
+// --- AGGIUNTO: INIZIALIZZAZIONE AUDIO AL PRIMO CLICK ---
+document.getElementById('startBtn').addEventListener('click', () => {
+    initAudio();
+    if (!musicManager) musicManager = new MusicManager(audioCtx);
+    musicManager.start();
+    
+    // Transizione al menu di selezione
+    const mainMenu = document.getElementById('mainMenu');
+    const charSelect = document.getElementById('charSelect');
+    mainMenu.style.opacity = '0';
+    setTimeout(() => {
+        mainMenu.style.display = 'none';
+        charSelect.style.display = 'flex';
+        setTimeout(() => charSelect.style.opacity = '1', 50);
+    }, 800);
+});
+
 function update(dt) {
     if (!world || !player || gameState === 'MENU') return;
+
+    // --- AGGIORNAMENTO TELECAMERA SINCRONIZZATO (Spostato all'inizio) ---
+    camera.x = player.x - width / 2;
+    camera.y = player.y - height / 1.5;
 
     // Se lo shop è aperto, il tempo scorre al 20% (Effetto Slow-Mo)
     if (isShopOpen) dt *= 0.2;
@@ -4550,8 +4220,7 @@ function update(dt) {
                 }
             }
         });
-
-        }
+    }
 
     if (player.isHitTimer > 0) player.isHitTimer -= dt;
 
@@ -4572,14 +4241,11 @@ function update(dt) {
     // Pulizia cadaveri
     // --- PULIZIA MEMORIA OTTIMIZZATA (Anti-Freeze) ---
     enemies = enemies.filter(z => {
+        if (!z) return false;
         if (z.state === 'dead' && z.deathTimer <= 0) return false;
-        if (z.y > 2500) return false; // Caduti nell'abisso (zombie normali)
+        if (z.y > 2500) return false; 
         return true;
     });
-
-    // 4. CAMERAMAN DIGITALE
-    camera.x = player.x - width / 2;
-    camera.y = player.y - height / 1.5;
 
     // 5. INTERAZIONE CON IL MONDO
     currentInteractable = null;
@@ -4671,6 +4337,11 @@ function update(dt) {
 
     if (player.health <= 0) {
         gameOver = true;
+        
+        // Nascondi UI In-Game specifica
+        const inv = document.getElementById('inventoryUI');
+        if (inv) inv.style.display = 'none';
+        
         if (musicManager) musicManager.stop();
         
         let gOver = document.getElementById('gameOver');
