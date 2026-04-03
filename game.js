@@ -16,6 +16,11 @@ function resize() {
     canvas.width = width;
     canvas.height = height;
     
+    // Disabilita smoothing per Pixel Art perfetta
+    ctx.imageSmoothingEnabled = false;
+    ctx.webkitImageSmoothingEnabled = false;
+    ctx.mozImageSmoothingEnabled = false;
+    
     // Invalida i cache del mondo al ridimensionamento
     if (world) {
         // Al momento non usiamo cache nel nuovo motore di parallasse
@@ -153,6 +158,7 @@ let allies = [];
 let enemies = [];
 let particles = [];
 let projectiles = []; // NUOVA LISTA PER SHURIKEN
+let enemyProjectiles = []; // NUOVA LISTA PER SPUTI VELENOSI
 let lastSpawnNight = -1;
 let currentDay = 1;
 let currentInteractable = null;
@@ -348,7 +354,9 @@ const gfx = {
     grass: new Image(),
     dirt: new Image(),
     sky_day: new Image(),
-    sky_night: new Image()
+    sky_night: new Image(),
+    carnivorous_plant: new Image(),
+    poison_spit: new Image()
 };
 
 let loadedAssets = 0;
@@ -365,14 +373,57 @@ function tryBoot() {
 // Fallback di sicurezza: se le immagini non rispondono entro 1 secondo, avvia comunque!
 setTimeout(tryBoot, 1000);
 
-gfx.grass.onload = tryBoot; gfx.dirt.onload = tryBoot; gfx.sky_day.onload = tryBoot; gfx.sky_night.onload = tryBoot;
-gfx.grass.onerror = tryBoot; gfx.dirt.onerror = tryBoot; gfx.sky_day.onerror = tryBoot; gfx.sky_night.onerror = tryBoot;
+// --- UTILITY PER RIMOZIONE SFONDO (Chroma-Key) ---
+function applyChromaKey(img, r, g, b) {
+    if (!img || img.width <= 0) return img;
+    try {
+        const tempCanvas = document.createElement('canvas');
+        const tCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
+        tempCanvas.width = img.width;
+        tempCanvas.height = img.height;
+        tCtx.drawImage(img, 0, 0);
+        const imgData = tCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+        const data = imgData.data;
+        for (let i = 0; i < data.length; i += 4) {
+            // Tolleranza per il bianco (molto luminosi > 240)
+            const isWhite = data[i] > 240 && data[i+1] > 240 && data[i+2] > 240;
+            if (isWhite) { 
+                data[i+3] = 0; 
+            }
+        }
+        tCtx.putImageData(imgData, 0, 0);
+        return tempCanvas; 
+    } catch (e) {
+        console.error("ChromaKey Error (probabile CORS):", e);
+        return img;
+    }
+}
+
+gfx.grass.onload = tryBoot; gfx.dirt.onload = tryBoot; gfx.sky_day.onload = tryBoot; gfx.sky_night.onload = tryBoot; gfx.poison_spit.onload = tryBoot;
+gfx.carnivorous_plant.onload = () => {
+    // Sostituiamo l'immagine originale con quella pulita (Bianco: 255, 255, 255)
+    gfx.carnivorous_plant = applyChromaKey(gfx.carnivorous_plant, 255, 255, 255);
+    tryBoot();
+};
+gfx.grass.onerror = tryBoot; gfx.dirt.onerror = tryBoot; gfx.sky_day.onerror = tryBoot; gfx.sky_night.onerror = tryBoot; gfx.poison_spit.onerror = tryBoot;
 
 // Caricamento su disco (Asincrono, farà scattare gli eventi di cui sopra)
 gfx.grass.src = 'grass.png';
 gfx.dirt.src = 'dirt.png';
 gfx.sky_day.src = 'sky_day.png';
 gfx.sky_night.src = 'sky_night.png';
+
+// Caricamento Spit Base64
+if (typeof POISON_SPIT_B64 !== 'undefined') {
+    gfx.poison_spit.src = POISON_SPIT_B64;
+}
+
+// Caricamento tramite Base64 per bypassare restrizioni CORS su file locali (file://)
+if (typeof CARNIVOROUS_PLANT_B64_WHITE !== 'undefined') {
+    gfx.carnivorous_plant.src = CARNIVOROUS_PLANT_B64_WHITE;
+} else {
+    gfx.carnivorous_plant.src = 'carnivorous_plant.png';
+}
 
 // ==========================================
 // 2. INPUT SYSTEM (Con Switch Stili Arcade 1, 2, 3)
@@ -514,6 +565,72 @@ class Projectile {
                 ctx.lineTo(0, 15);
                 ctx.lineTo(-10, 0);
             }
+            ctx.fill();
+        }
+        ctx.restore();
+    }
+}
+
+// --- NUOVO: PROIETTILE VELENOSO PER PIANTA ---
+class PoisonProjectile {
+    constructor(x, y, vx, vy) {
+        this.x = x;
+        this.y = y;
+        this.vx = vx;
+        this.vy = vy;
+        this.life = 3.0; 
+        this.width = 15;
+        this.height = 15;
+        this.gravity = 500; // Cade verso il basso
+    }
+
+    update(dt, player) {
+        this.vy += this.gravity * dt;
+        this.x += this.vx * dt;
+        this.y += this.vy * dt;
+        this.life -= dt;
+
+        // Collisione con il Giocatore
+        let dx = Math.abs(this.x - (player.x + player.width / 2));
+        let dy = Math.abs(this.y - (player.y + player.height / 2));
+
+        if (dx < 35 && dy < 45 && player.isHitTimer <= 0) {
+            player.health -= 5;
+            player.poisonTimer = 5.0; // 5 secondi di veleno
+            player.isHitTimer = 0.5;
+            playSound('player_hit', player.x, player.y);
+            createSparks(this.x, this.y, '#ADFF2F'); 
+            this.life = 0;
+        }
+    }
+
+    draw(ctx, camera) {
+        let sx = this.x - camera.x;
+        let sy = this.y - camera.y;
+
+        // Scia del proiettile (micro-particelle verdi)
+        if (Math.random() > 0.5) createSparks(this.x, this.y, '#ADFF2F');
+
+        ctx.save();
+        ctx.translate(sx, sy);
+        
+        // Calcolo rotazione basato sulla velocità attuale
+        let angle = Math.atan2(this.vy, this.vx);
+        ctx.rotate(angle + Math.PI / 2); // Aggiungiamo 90 gradi se lo sprite è orientato verticalmente
+
+        // Effetto bagliore velenoso
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = '#ADFF2F';
+
+        if (gfx.poison_spit && gfx.poison_spit.complete) {
+            // Rendering dello sprite scalato (es. 24x24)
+            let drawSize = 24; 
+            ctx.drawImage(gfx.poison_spit, -drawSize / 2, -drawSize / 2, drawSize, drawSize);
+        } else {
+            // Fallback cerchio se l'immagine non è pronta
+            ctx.fillStyle = '#ADFF2F';
+            ctx.beginPath();
+            ctx.arc(0, 0, 8, 0, Math.PI * 2);
             ctx.fill();
         }
         ctx.restore();
@@ -835,6 +952,18 @@ class World {
             this.platforms.push(plat);
             this.addToGrid(plat, 'platforms');
 
+            // --- SPAWN PIANTA CARNIVORA ---
+            // Aumentata la frequenza e densità (circa 2-3 volte più comuni)
+            let maxPlants = Math.floor(plainLength / 350); 
+            for (let i = 0; i < maxPlants; i++) {
+                if (Math.random() > 0.4) {
+                    let plantX = currentX + (i * 350) + Math.random() * 200;
+                    if (plantX < currentX + plainLength - 100) {
+                        enemies.push(new CarnivorousPlant(plantX, groundLevel - 128));
+                    }
+                }
+            }
+
             // 2. Edifici fisici esplorabili
             if (plainLength > 800 && Math.random() > 0.6) {
                 let isCastle = Math.random() > 0.7;
@@ -1019,6 +1148,12 @@ class World {
         if (typeof gfx !== 'undefined' && gfx.grass && gfx.grass.complete && gfx.grass.naturalWidth > 0) {
             ctx.save();
             let grassPattern = ctx.createPattern(gfx.grass, 'repeat');
+            
+            // --- SCALATURA PROPORZIONATA (V2) ---
+            let scale = 0.33; 
+            let matrix = new DOMMatrix().scale(scale, scale);
+            grassPattern.setTransform(matrix);
+            
             ctx.fillStyle = grassPattern;
             ctx.fill();
             ctx.fillStyle = 'rgba(20, 35, 20, 0.78)'; // Tinta verde scura per dare profondita'
@@ -1028,6 +1163,7 @@ class World {
             ctx.fillStyle = '#3A4D3A';
             ctx.fill();
         }
+
 
         // Bordo netto in cima alle colline
         ctx.strokeStyle = '#4A7A4A';
@@ -1168,6 +1304,14 @@ class World {
                     let grassThickness = Math.min(40, plat.height);
                     if (typeof gfx !== 'undefined' && gfx.grass && gfx.grass.complete && gfx.grass.naturalWidth > 0) {
                         let pattern = ctx.createPattern(gfx.grass, 'repeat');
+                        
+                        // --- SCALATURA PROPORZIONATA (V2) ---
+                        // Ridimensioniamo il pattern del 33% per rendere i fili d'erba realistici 
+                        // rispetto allo stickman (70px).
+                        let scale = 0.33; 
+                        let matrix = new DOMMatrix().scale(scale, scale);
+                        pattern.setTransform(matrix);
+                        
                         ctx.fillStyle = pattern;
                         ctx.save();
                         ctx.translate(screenX, screenY);
@@ -1177,6 +1321,7 @@ class World {
                         ctx.fillStyle = '#4a7023';
                         ctx.fillRect(screenX, screenY, plat.width, grassThickness);
                     }
+
                 }
             }
         });
@@ -1391,9 +1536,25 @@ class Player {
 
         // --- MECCANICHE RONIN (Brezza del Guerriero) ---
         this.speedBoostTimer = 0; 
+        
+        // --- EFFETTI DI STATO ---
+        this.poisonTimer = 0;
     }
 
     update(dt, world, enemies) {
+        // --- GESTIONE VELENO ---
+        if (this.poisonTimer > 0) {
+            this.poisonTimer -= dt;
+            // Danni nel tempo (1 HP ogni 0.5s circa)
+            if (Math.random() < 0.02) { 
+                this.health -= 0.5;
+                createSparks(this.x + Math.random() * this.width, this.y + Math.random() * this.height, '#ADFF2F');
+            }
+            if (this.poisonTimer <= 0) {
+                showStyleTip("VELENO SVANITO! 🌿");
+            }
+        }
+
         // --- LOGICA INPUT DIFENSIVA (PARATA) ---
         this.isParrying = (keys['ShiftLeft'] || keys['ShiftRight'] || keys['MouseRight']) && !this.isAttacking;
 
@@ -3353,12 +3514,175 @@ class Zombie {
         if (this.state !== 'emerging' && this.state !== 'digging' && this.hp > 0) {
             ctx.fillStyle = '#111';
             ctx.fillRect(screenX, screenY - 20, 40, 8); // Base Oscura
-            let maxHP = this.isAlly ? 10 : 3; // Gli alleati hanno più vita visiva? No, usiamo tacche diverse
+            let maxHP = this.isAlly ? 10 : 3; 
             let barW = 36 / (this.isAlly ? 5 : 3);
             for (let b = 0; b < (this.isAlly ? 5 : 3); b++) {
                 ctx.fillStyle = (b < (this.isAlly ? this.hp / 20 : this.hp)) ? (this.isAlly ? '#3498db' : '#DD0000') : '#440000';
                 ctx.fillRect(screenX + 2 + (b * barW), screenY - 18, barW - 2, 4);
             }
+        }
+    }
+}
+
+// --- NUOVA CLASSE NEMICO: PIANTA CARNIVORA ---
+class CarnivorousPlant {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.width = 128; // Pianta più grande e minacciosa
+        this.height = 128;
+        this.hp = 8; // Leggermente più resistente
+        this.state = 'hiding'; // 'hiding', 'emerging', 'active', 'attacking'
+        this.timer = 0;
+        this.attackCooldown = 3.0; // Un po' più lento per bilanciare l'animazione
+        this.visualScaleY = 0; 
+        this.isPlant = true;
+        this.isHit = 0;
+        this.direction = 1;
+
+        // --- SISTEMA ANIMAZIONE 4x3 ---
+        this.animFrame = 0;
+        this.animRow = 0; // 0: Idle, 1: Emerging, 2: Attack
+        this.animTimer = 0;
+        this.animSpeed = 0.15; // Secondi per frame
+    }
+
+    update(dt, world, player) {
+        if (this.isHit > 0) this.isHit -= dt;
+        if (this.hp <= 0) return;
+
+        let dx = player.x - this.x;
+        this.direction = dx > 0 ? 1 : -1;
+        let dist = Math.abs(dx);
+
+        // Avanzamento Animazione
+        this.animTimer += dt;
+        if (this.animTimer >= this.animSpeed) {
+            this.animTimer = 0;
+            this.animFrame = (this.animFrame + 1) % 4; // Ciclo di 4 frame
+        }
+
+        switch (this.state) {
+            case 'hiding':
+                this.animRow = 1; // Mostra il primo frame di emersione se sta per uscire
+                this.animFrame = 0;
+                if (dist < 600) {
+                    this.state = 'emerging';
+                    this.timer = 1.0;
+                    playSound('wake', this.x, this.y);
+                }
+                break;
+            case 'emerging':
+                this.animRow = 1; // Riga Emersione
+                this.timer -= dt;
+                
+                // --- EFFETTI EMERSIONE ---
+                if (Math.random() > 0.7) {
+                    createDust(this.x + 30, this.y + 128, 2);
+                    createSparks(this.x + 30, this.y + 128, '#4a7023');
+                }
+                
+                if (this.timer <= 0) {
+                    this.state = 'active';
+                    screenShake = 10;
+                    createDust(this.x + 30, this.y + 128, 10);
+                }
+                break;
+            case 'active':
+                this.animRow = 0; // Riga Idle (Respiro)
+                this.attackCooldown -= dt;
+                if (this.attackCooldown <= 0 && dist < 700) {
+                    this.state = 'attacking';
+                    this.timer = 0.6; // Durata animazione attacco
+                    this.animFrame = 0;
+                    this.attack();
+                    this.attackCooldown = 3.0 + Math.random();
+                }
+                if (dist > 1000) {
+                    this.state = 'hiding';
+                }
+                break;
+            case 'attacking':
+                this.animRow = 2; // Riga Attacco (Sputo)
+                this.timer -= dt;
+                if (this.timer <= 0) {
+                    this.state = 'active';
+                }
+                break;
+        }
+    }
+
+    attack() {
+        // Puntamento Balistico Perfetto
+        let spawnX = this.x + 40;
+        let spawnY = this.y - 20;
+        
+        // Bersaglio: Centro del giocatore
+        let targetX = player.x + player.width / 2;
+        let targetY = player.y + player.height / 2;
+        
+        let dx = targetX - spawnX;
+        let dy = targetY - spawnY;
+        
+        // Costante di gravità definita nella classe PoisonProjectile
+        let g = 500; 
+        
+        // Calcoliamo il tempo di volo basandoci sulla distanza orizzontale
+        // Per un arco piacevole, usiamo una velocità orizzontale desiderata
+        let desiredVx = (dx > 0 ? 350 : -350);
+        let t = dx / desiredVx;
+        
+        // Se il bersaglio è troppo vicino, forziamo un tempo minimo per evitare traiettorie verticali eccessive
+        if (t < 0.5) t = 0.5;
+        
+        // Ricalcoliamo vx per il tempo t scelto
+        let vx = dx / t;
+        
+        // Calcolo vy balistico: dy = vy*t + 0.5*g*t^2  => vy = (dy - 0.5*g*t^2) / t
+        let vy = (dy - (0.5 * g * t * t)) / t;
+        
+        enemyProjectiles.push(new PoisonProjectile(spawnX, spawnY, vx, vy));
+        playSound('slash', this.x, this.y);
+    }
+
+    draw(ctx, camera) {
+        if (this.hp <= 0) return;
+        let sx = this.x - camera.x;
+        let sy = this.y - camera.y;
+
+        if (this.state === 'hiding') return;
+
+        ctx.save();
+        ctx.translate(sx + this.width / 2, sy + this.height);
+        if (this.direction === -1) ctx.scale(-1, 1);
+
+        if (gfx.carnivorous_plant && (gfx.carnivorous_plant.complete || gfx.carnivorous_plant instanceof HTMLCanvasElement)) {
+            // Calcolo coordinate sorgente dallo Sprite Sheet 4x4
+            let sw = gfx.carnivorous_plant.width / 4;
+            let sh = gfx.carnivorous_plant.height / 4;
+            let sourceX = this.animFrame * sw;
+            let sourceY = this.animRow * sh;
+
+            // Disegna il frame ritagliato
+            ctx.drawImage(
+                gfx.carnivorous_plant,
+                sourceX, sourceY, sw, sh,
+                -this.width / 2, -this.height, this.width, this.height
+            );
+        } else {
+            // Fallback (solo se l'immagine non è ancora caricata)
+            ctx.fillStyle = '#2E7D32';
+            ctx.fillRect(-20, -60, 40, 60);
+        }
+        
+        ctx.restore();
+
+        // Barra salute micro
+        if (this.state !== 'hiding' && this.hp > 0) {
+            ctx.fillStyle = '#111';
+            ctx.fillRect(sx + 20, sy - 15, 40, 6);
+            ctx.fillStyle = this.isHit > 0 ? '#FFF' : '#ADFF2F';
+            ctx.fillRect(sx + 22, sy - 14, (this.hp / 5) * 36, 4);
         }
     }
 }
@@ -4239,6 +4563,13 @@ function update(dt) {
         if (p.life <= 0) projectiles.splice(i, 1);
     }
 
+    // --- AGGIORNAMENTO PROIETTILI NEMICI (SPUTI) ---
+    for (let i = enemyProjectiles.length - 1; i >= 0; i--) {
+        let ep = enemyProjectiles[i];
+        ep.update(dt, player);
+        if (ep.life <= 0) enemyProjectiles.splice(i, 1);
+    }
+
     // Pulizia cadaveri
     // --- PULIZIA MEMORIA OTTIMIZZATA (Anti-Freeze) ---
     enemies = enemies.filter(z => {
@@ -4562,6 +4893,10 @@ function draw() {
 
     projectiles.forEach(p => {
         if (inView(p.x, p.y, 20, 20)) p.draw(ctx, camera);
+    });
+
+    enemyProjectiles.forEach(ep => {
+        if (inView(ep.x, ep.y, 30, 30)) ep.draw(ctx, camera);
     });
 
     collectables.forEach(c => {
