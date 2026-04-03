@@ -1383,6 +1383,7 @@ class Player {
         // --- SISTEMA LEGENDARY BUFFS ---
         this.buffType = null; // 'OVERCLOCK', 'LIFESTEAL', 'HALO'
         this.buffTimer = 0;
+        this.isHitTimer = 0; // Timer di invulnerabilità temporanea dopo un colpo
         
         // --- PORTATA ATTACCO DINAMICA ---
         this.weaponRangeX = 85;
@@ -3160,8 +3161,8 @@ class Zombie {
                         }
                     }
                 }
-                if (player.hp > 0 && player.isHitTimer <= 0 && this.hp > 0 && this.isHit <= 0 && this.state === 'chasing') {
-                    let pDx = Math.abs(player.x - (this.x + this.width/2));
+                if (player.health > 0 && player.isHitTimer <= 0 && this.hp > 0 && this.isHit <= 0 && this.state === 'chasing') {
+                    let pDx = Math.abs(player.x - (this.x + this.width / 2));
                     let pDy = Math.abs(player.y - this.y);
                     if (pDx < 45 && pDy < 60) {
                         let facingEnemy = (this.x > player.x && player.direction === 1) || (this.x < player.x && player.direction === -1);
