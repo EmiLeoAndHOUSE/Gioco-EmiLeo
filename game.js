@@ -59,66 +59,89 @@ let musicManager = null;
 class MusicManager {
     constructor(ctx) {
         this.ctx = ctx;
-        this.audio = new Audio('soundtrack.mp3');
-        this.audio.loop = true;
-        this.audio.volume = 0; // Inizia muto per il fade-in
+        
+        // Due tracce separate: Aura per il menu, Soundtrack per il gioco
+        this.audioMenu = new Audio('Aura.mp3');
+        this.audioGame = new Audio('soundtrack.mp3');
+        
+        this.audioMenu.loop = true;
+        this.audioGame.loop = true;
+        
+        this.audioMenu.volume = 0; 
+        this.audioGame.volume = 0;
         
         this.isPlaying = false;
         this.isIntro = true;
+        this.activeTrack = null;
         
         // Caricamento leggero
-        this.audio.preload = 'auto';
+        this.audioMenu.preload = 'auto';
+        this.audioGame.preload = 'auto';
     }
 
     setGameMode() {
+        if (!this.isIntro) return;
         this.isIntro = false;
-        // Abbassa leggermente il volume durante il gioco per gli effetti sonori
-        if (this.audio) {
-            const currentVol = this.audio.volume;
-            const targetVol = 0.1; // Volume di gioco molto ridotto
-            
-            // Fade graduale al volume di gioco
-            const fadeInterval = setInterval(() => {
-                if (this.audio.volume > targetVol) {
-                    this.audio.volume = Math.max(targetVol, this.audio.volume - 0.05);
-                } else if (this.audio.volume < targetVol) {
-                    this.audio.volume = Math.min(targetVol, this.audio.volume + 0.05);
+        
+        // Fade out della musica del MENU e Fade in della musica di GIOCO
+        if (this.audioMenu) {
+            let fadeOut = setInterval(() => {
+                if (this.audioMenu.volume > 0.01) {
+                    this.audioMenu.volume -= 0.01;
                 } else {
-                    clearInterval(fadeInterval);
+                    this.audioMenu.volume = 0;
+                    this.audioMenu.pause();
+                    clearInterval(fadeOut);
+                    
+                    // Avvia la musica di gioco dopo il fade-out
+                    this.playGameMusic();
+                }
+            }, 50);
+        }
+    }
+
+    playGameMusic() {
+        this.audioGame.play().then(() => {
+            let vol = 0;
+            const targetVol = 0.02; // Volume di gioco (sottofondo)
+            const fadeIn = setInterval(() => {
+                vol += 0.005;
+                if (vol >= targetVol) {
+                    this.audioGame.volume = targetVol;
+                    clearInterval(fadeIn);
+                } else {
+                    this.audioGame.volume = vol;
                 }
             }, 100);
-        }
+        }).catch(err => console.warn("Errore riproduzione soundtrack.mp3:", err));
     }
 
     start() {
         if (this.isPlaying) return;
         this.isPlaying = true;
         
-        // Gestione errore se il file non esiste ancora
-        this.audio.play().then(() => {
-            // Fade-in iniziale
+        // Riproduce Aura.mp3 nel menu
+        this.audioMenu.play().then(() => {
             let vol = 0;
             const fadeIn = setInterval(() => {
-                vol += 0.05;
-                if (vol >= 0.2) { // Volume massimo menu molto ridotto
-                    this.audio.volume = 0.2;
+                vol += 0.01;
+                if (vol >= 0.06) { // Volume menu
+                    this.audioMenu.volume = 0.06;
                     clearInterval(fadeIn);
                 } else {
-                    this.audio.volume = vol;
+                    this.audioMenu.volume = vol;
                 }
             }, 100);
         }).catch(err => {
-            console.warn("File 'soundtrack.mp3' non trovato o errore di riproduzione:", err);
+            console.warn("File 'Aura.mp3' non trovato o errore di riproduzione:", err);
             this.isPlaying = false;
         });
     }
 
     stop() {
         this.isPlaying = false;
-        if (this.audio) {
-            this.audio.pause();
-            this.audio.currentTime = 0;
-        }
+        if (this.audioMenu) this.audioMenu.pause();
+        if (this.audioGame) this.audioGame.pause();
     }
 }
 
